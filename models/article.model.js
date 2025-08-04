@@ -47,27 +47,6 @@ const articleSchema = new Schema(
     content: {
       type: Schema.Types.Mixed,
       required: true,
-      validate: {
-        validator: function (value) {
-          if (this.isLive) {
-            if (!Array.isArray(value)) return false;
-            return value.every((item) => {
-              // Use liveArticleSchema to validate each item
-              const LiveArticle = mongoose.model(
-                'LiveArticle',
-                liveArticleSchema
-              );
-              const liveArticle = new LiveArticle(item);
-              return !liveArticle.validateSync();
-            });
-          }
-          return typeof value === 'string' && value.trim().length > 0;
-        },
-        message: (props) =>
-          this.isLive
-            ? 'Live articles must conform to liveArticleSchema structure'
-            : 'Regular content must be a non-empty string',
-      },
     },
     category: [
       {
@@ -76,10 +55,11 @@ const articleSchema = new Schema(
         trim: true,
       },
     ],
-    tags: {
-      type: [String],
-      default: [],
-    },
+    tags: [
+      {
+        type: String,
+      },
+    ],
     isLive: {
       type: Boolean,
       required: true,
@@ -139,19 +119,16 @@ const articleSchema = new Schema(
   }
 );
 
-// Method to create a live article instance using the liveArticleSchema
 articleSchema.methods.createLiveArticle = function (data) {
   return new mongoose.Document(data, liveArticleSchema);
 };
 
-// Method to validate live article data using the liveArticleSchema
 articleSchema.methods.validateLiveArticle = function (data) {
   const LiveArticle = mongoose.model('LiveArticle', liveArticleSchema);
   const liveArticle = new LiveArticle(data);
   return liveArticle.validateSync();
 };
 
-// Method to create a live article from string content
 articleSchema.methods.createLiveArticleFromString = function (content) {
   return {
     content_title: this.title,
@@ -163,34 +140,23 @@ articleSchema.methods.createLiveArticleFromString = function (content) {
   };
 };
 
-articleSchema.pre('save', function (next) {
-  if (this.isModified('isLive') && this.isLive) {
+articleSchema.pre('validate', function (next) {
+  if (this.isLive) {
     if (typeof this.content === 'string') {
       this.content = [this.createLiveArticleFromString(this.content)];
-    } else if (
-      Array.isArray(this.content) &&
-      this.content.length > 0 &&
-      typeof this.content[0] === 'string'
-    ) {
-      this.content = this.content.map((item) =>
-        this.createLiveArticleFromString(item)
-      );
-    } else if (
-      Array.isArray(this.content) &&
-      this.content.length > 0 &&
-      !this.content[0].hasOwnProperty('isKey')
-    ) {
-      this.content = this.content.map((item) => ({
-        ...item,
-        isKey: item.isKey || false,
-      }));
+    }
+  } else {
+    if (Array.isArray(this.content)) {
+      this.content = this.content[0]?.content_detail || '';
     }
   }
+  next();
+});
 
+articleSchema.pre('save', function (next) {
   if (this.isModified('wasLive') && this.wasLive) {
     this.isLive = false;
   }
-
   next();
 });
 

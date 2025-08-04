@@ -102,10 +102,11 @@ const movieSchema = new Schema(
     meta_description: {
       type: String,
     },
-    tags: {
-      type: [String],
-      default: [],
-    },
+    tags: [
+      {
+        type: String,
+      },
+    ],
     slug: {
       type: String,
       trim: true,

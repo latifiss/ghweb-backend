@@ -33,4 +33,6 @@ router.post(
 router.patch('/:id/end-live', articleController.endLiveArticle);
 router.patch('/:id/mark-key/:updateId', articleController.markAsKeyEvent);
 
+router.delete('/:id', articleController.deleteArticle);
+
 module.exports = router;

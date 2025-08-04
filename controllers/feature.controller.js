@@ -37,7 +37,7 @@ exports.createFeature = async (req, res) => {
       rating: rating || 0,
       label,
       venue,
-      tags: tags || [],
+      tags: tags || '',
       published_at: new Date(published_at),
       creator: req.user?.name || 'Admin',
       ...(imageUrl && { image_url: imageUrl }),

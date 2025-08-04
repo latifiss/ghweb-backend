@@ -37,10 +37,11 @@ const reviewSchema = new Schema(
     meta_description: {
       type: String,
     },
-    tags: {
-      type: [String],
-      default: [],
-    },
+    tags: [
+      {
+        type: String,
+      },
+    ],
     creator: {
       type: String,
       default: 'Admin',

@@ -14,17 +14,23 @@ const featureRouter = require('./routes/feature.routes');
 const authRouter = require('./routes/adminAuth.routes');
 
 const app = express();
-app.use(express.json());
-app.use(morgan('dev'));
+
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002',
+];
 
 const corsOptions = {
-  origin: 'http://localhost:3000',
+  origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 };
 
 app.use(cors(corsOptions));
+app.use(express.json());
+app.use(morgan('dev'));
 
 connectDB();
 

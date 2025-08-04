@@ -3,6 +3,9 @@ const { uploadToR2, deleteFromR2 } = require('../utils/r2');
 
 exports.createArticle = async (req, res) => {
   try {
+    console.log('Incoming request body:', req.body);
+    console.log('Incoming files:', req.files);
+
     const {
       title,
       description,
@@ -16,7 +19,15 @@ exports.createArticle = async (req, res) => {
       published_at,
     } = req.body;
 
+    // Validate required fields
     if (!title || !description || !content || !published_at || !category) {
+      console.error('Missing required fields:', {
+        title: !!title,
+        description: !!description,
+        content: !!content,
+        published_at: !!published_at,
+        category: !!category,
+      });
       return res.status(400).json({
         status: 'fail',
         message:
@@ -27,46 +38,70 @@ exports.createArticle = async (req, res) => {
     let imageUrl = null;
     let contentImageUrl = null;
 
-    if (req.files?.articleThumbnail) {
-      imageUrl = await uploadToR2(
-        req.files.articleThumbnail[0].buffer,
-        req.files.articleThumbnail[0].mimetype,
-        'articles'
-      );
+    // Handle file uploads
+    try {
+      if (req.files?.articleThumbnail) {
+        console.log('Processing article thumbnail...');
+        imageUrl = await uploadToR2(
+          req.files.articleThumbnail[0].buffer,
+          req.files.articleThumbnail[0].mimetype,
+          'articles'
+        );
+        console.log('Article thumbnail uploaded:', imageUrl);
+      }
+
+      if (req.files?.contentThumbnail) {
+        console.log('Processing content thumbnail...');
+        contentImageUrl = await uploadToR2(
+          req.files.contentThumbnail[0].buffer,
+          req.files.contentThumbnail[0].mimetype,
+          'articles'
+        );
+        console.log('Content thumbnail uploaded:', contentImageUrl);
+      }
+    } catch (uploadError) {
+      console.error('File upload failed:', uploadError);
+      return res.status(500).json({
+        status: 'error',
+        message: 'Failed to upload image(s)',
+      });
     }
 
-    if (req.files?.contentThumbnail) {
-      contentImageUrl = await uploadToR2(
-        req.files.contentThumbnail[0].buffer,
-        req.files.contentThumbnail[0].mimetype,
-        'articles'
-      );
-    }
-
+    // Handle headline articles
     if (isHeadline) {
+      console.log('Updating existing headlines...');
       await Article.updateMany(
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
     }
 
+    // Prepare content based on article type
+    let articleContent;
+    if (isLive) {
+      console.log('Creating live article content...');
+      articleContent = [
+        {
+          content_title: title,
+          content_description: description,
+          content_detail: content,
+          content_image_url: contentImageUrl || imageUrl,
+          content_published_at: new Date(published_at),
+          isKey: false,
+        },
+      ];
+    } else {
+      console.log('Creating regular article content...');
+      articleContent = content;
+    }
+
+    // Create new article
     const article = new Article({
       title,
       description,
-      content: isLive
-        ? [
-            {
-              content_title: title,
-              content_description: description,
-              content_detail: content,
-              content_image_url: contentImageUrl || imageUrl,
-              content_published_at: new Date(published_at),
-              isKey: false,
-            },
-          ]
-        : content,
+      content: articleContent,
       category: Array.isArray(category) ? category : [category],
-      tags: tags || [],
+      tags: tags || '',
       isLive: isLive || false,
       isBreaking: isBreaking || false,
       isHeadline: isHeadline || false,
@@ -80,7 +115,32 @@ exports.createArticle = async (req, res) => {
       }),
     });
 
+    console.log('Article object before save:', {
+      title: article.title,
+      description: article.description,
+      contentType: isLive ? 'live' : 'regular',
+      isLive: article.isLive,
+      isBreaking: article.isBreaking,
+      isHeadline: article.isHeadline,
+    });
+
+    // Validate before save
+    const validationError = article.validateSync();
+    if (validationError) {
+      console.error('Validation error:', validationError);
+      const errors = {};
+      Object.keys(validationError.errors).forEach((key) => {
+        errors[key] = validationError.errors[key].message;
+      });
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Validation failed',
+        errors,
+      });
+    }
+
     await article.save();
+    console.log('Article saved successfully:', article._id);
 
     res.status(201).json({
       status: 'success',
@@ -89,12 +149,22 @@ exports.createArticle = async (req, res) => {
       },
     });
   } catch (err) {
+    console.error('Error creating article:', {
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+      name: err.name,
+      errors: err.errors,
+    });
+
     if (err.code === 11000) {
+      console.error('Duplicate slug error:', err);
       return res.status(400).json({
         status: 'fail',
         message: 'Slug must be unique',
       });
     }
+
     res.status(500).json({
       status: 'error',
       message: err.message,
@@ -457,6 +527,44 @@ exports.getArticlesByCategory = async (req, res) => {
       data: {
         articles,
       },
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+exports.deleteArticle = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const article = await Article.findById(id);
+    if (!article) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Article not found',
+      });
+    }
+
+    if (article.image_url) {
+      await deleteFromR2(article.image_url);
+    }
+
+    if (Array.isArray(article.content)) {
+      for (const contentBlock of article.content) {
+        if (contentBlock.content_image_url) {
+          await deleteFromR2(contentBlock.content_image_url);
+        }
+      }
+    }
+
+    await article.deleteOne();
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Article deleted successfully',
     });
   } catch (err) {
     res.status(500).json({
