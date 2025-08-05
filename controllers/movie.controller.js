@@ -22,6 +22,7 @@ exports.createMovie = async (req, res) => {
       genre,
       releaseYear,
       tags,
+      creator,
       published_at,
     } = req.body;
 
@@ -71,8 +72,8 @@ exports.createMovie = async (req, res) => {
       genre: genre || [],
       releaseYear,
       tags: tags || [],
+      creator,
       published_at: new Date(published_at),
-      creator: req.user?.name || 'Admin',
       ...(imageUrl && { image_url: imageUrl }),
     });
 

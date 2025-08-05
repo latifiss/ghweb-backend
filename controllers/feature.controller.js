@@ -11,6 +11,7 @@ exports.createFeature = async (req, res) => {
       label,
       venue,
       tags,
+      creator,
       published_at,
     } = req.body;
 
@@ -39,7 +40,7 @@ exports.createFeature = async (req, res) => {
       venue,
       tags: tags || '',
       published_at: new Date(published_at),
-      creator: req.user?.name || 'Admin',
+      creator,
       ...(imageUrl && { image_url: imageUrl }),
     });
 

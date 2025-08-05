@@ -12,7 +12,7 @@ router.post(
   ]),
   articleController.createArticle
 );
-router.patch(
+router.put(
   '/:id',
   uploadMultiple.fields([
     { name: 'articleThumbnail', maxCount: 1 },

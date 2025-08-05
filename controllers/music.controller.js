@@ -22,6 +22,7 @@ exports.createMusic = async (req, res) => {
       label,
       tags,
       author,
+      creator,
       published_at,
     } = req.body;
 
@@ -75,8 +76,8 @@ exports.createMusic = async (req, res) => {
       label,
       tags: tags || [],
       author,
+      creator,
       published_at: new Date(published_at),
-      creator: req.user?.name || 'Admin',
       ...(imageUrl && { image_url: imageUrl }),
     });
 

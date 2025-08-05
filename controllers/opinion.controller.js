@@ -3,7 +3,8 @@ const { uploadToR2, deleteFromR2 } = require('../utils/r2');
 
 exports.createOpinion = async (req, res) => {
   try {
-    const { title, description, content, tags, published_at } = req.body;
+    const { title, description, content, tags, published_at, creator } =
+      req.body;
 
     if (!title || !description || !content || !published_at) {
       return res.status(400).json({
@@ -27,7 +28,7 @@ exports.createOpinion = async (req, res) => {
       content,
       tags: tags || [],
       published_at: new Date(published_at),
-      creator: req.user?.name || 'Admin',
+      creator,
       ...(imageUrl && { image_url: imageUrl }),
     });
 

@@ -5,7 +5,7 @@ const { upload } = require('../utils/multer');
 const router = express.Router();
 
 router.post('/', upload.single('image_url'), movieController.createMovie);
-router.patch('/:id', upload.single('image_url'), movieController.updateMovie);
+router.put('/:id', upload.single('image_url'), movieController.updateMovie);
 router.get('/', movieController.getAllMovies);
 router.get('/genre/:genre', movieController.getMoviesByGenre);
 router.get('/:id', movieController.getSingleMovie);

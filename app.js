@@ -12,6 +12,7 @@ const reviewRouter = require('./routes/review.routes');
 const opinionRouter = require('./routes/opinion.routes');
 const featureRouter = require('./routes/feature.routes');
 const authRouter = require('./routes/adminAuth.routes');
+const feedRouter = require('./routes/feed.routes');
 
 const app = express();
 
@@ -41,6 +42,7 @@ app.use('/api/review', reviewRouter);
 app.use('/api/opinion', opinionRouter);
 app.use('/api/feature', featureRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/feed', feedRouter);
 
 app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message });
