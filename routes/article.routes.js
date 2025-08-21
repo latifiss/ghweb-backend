@@ -21,9 +21,14 @@ router.put(
   articleController.updateArticle
 );
 router.get('/', articleController.getArticles);
-router.get('/similar/:id', articleController.getSimilarArticles);
+router.get('/headline', articleController.getHeadline);
+router.get(
+  '/category-headline/:category',
+  articleController.getCategoryHeadline
+);
+router.get('/similar/:slug', articleController.getSimilarArticles);
 router.get('/category/:category', articleController.getArticlesByCategory);
-router.get('/:id', articleController.getArticleById);
+router.get('/:slug', articleController.getArticleById);
 
 router.post(
   '/:id/live-updates',

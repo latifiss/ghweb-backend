@@ -133,10 +133,8 @@ exports.updateOpinion = async (req, res) => {
 
 exports.getSingleOpinion = async (req, res) => {
   try {
-    const { id } = req.params;
-    const opinion = await Opinion.findOne({
-      $or: [{ _id: id }, { slug: id }],
-    });
+    const { slug } = req.params;
+    const opinion = await Opinion.findOne({ slug });
 
     if (!opinion) {
       return res.status(404).json({

@@ -75,7 +75,15 @@ const articleSchema = new Schema(
       required: true,
       default: false,
     },
+    breakingExpiresAt: {
+      type: Date,
+    },
     isHeadline: {
+      type: Boolean,
+      required: true,
+      default: false,
+    },
+    isCategoryHeadline: {
       type: Boolean,
       required: true,
       default: false,
@@ -118,6 +126,18 @@ const articleSchema = new Schema(
     timestamps: true,
   }
 );
+
+articleSchema.index({ breakingExpiresAt: 1 }, { expireAfterSeconds: 0 });
+
+articleSchema.pre('save', function (next) {
+  if (this.isModified('isBreaking') && this.isBreaking) {
+    this.breakingExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+  }
+  if (this.isModified('isBreaking') && !this.isBreaking) {
+    this.breakingExpiresAt = null;
+  }
+  next();
+});
 
 articleSchema.methods.createLiveArticle = function (data) {
   return new mongoose.Document(data, liveArticleSchema);

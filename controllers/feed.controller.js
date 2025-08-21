@@ -84,8 +84,11 @@ exports.getFeedByCategory = async (req, res) => {
     const MIXED_SECTION_SIZE = 24; // First 24 articles with 45% latest, 55% ranked
     const FRESHNESS_THRESHOLD = 36 * 60 * 60 * 1000; // 36 hours in milliseconds
 
-    // 1. Fetch all category articles sorted by date
-    const allArticles = await Article.find({ category }).sort({
+    // 1. Fetch all category articles sorted by date - UPDATED TO HANDLE ARRAY CATEGORIES
+    const categoryRegex = new RegExp(`^${category}$`, 'i');
+    const allArticles = await Article.find({
+      category: { $elemMatch: { $regex: categoryRegex } },
+    }).sort({
       published_at: -1,
     });
 

@@ -197,10 +197,8 @@ exports.updateMovie = async (req, res) => {
 
 exports.getSingleMovie = async (req, res) => {
   try {
-    const { id } = req.params;
-    const movie = await Movie.findOne({
-      $or: [{ _id: id }, { slug: id }],
-    });
+    const { slug } = req.params;
+    const movie = await Movie.findOne({ slug });
 
     if (!movie) {
       return res.status(404).json({

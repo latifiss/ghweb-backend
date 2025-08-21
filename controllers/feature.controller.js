@@ -121,10 +121,8 @@ exports.updateFeature = async (req, res) => {
 
 exports.getSingleFeature = async (req, res) => {
   try {
-    const { id } = req.params;
-    const feature = await Feature.findOne({
-      $or: [{ _id: id }, { slug: id }],
-    });
+    const { slug } = req.params;
+    const feature = await Feature.findOne({ slug });
 
     if (!feature) {
       return res.status(404).json({

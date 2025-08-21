@@ -9,7 +9,7 @@ router.put('/:id', upload.single('image_url'), featureController.updateFeature);
 router.get('/', featureController.getAllFeatures);
 router.get('/tag/:tag', featureController.getFeaturesByTag);
 router.get('/venue/:venue', featureController.getFeaturesByVenue);
-router.get('/:id', featureController.getSingleFeature);
+router.get('/:slug', featureController.getSingleFeature);
 router.delete('/:id', featureController.deleteFeature);
 
 module.exports = router;

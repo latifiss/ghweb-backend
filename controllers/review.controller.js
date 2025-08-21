@@ -145,10 +145,8 @@ exports.updateReview = async (req, res) => {
 
 exports.getSingleReview = async (req, res) => {
   try {
-    const { id } = req.params;
-    const review = await Review.findOne({
-      $or: [{ _id: id }, { slug: id }],
-    });
+    const { slug } = req.params;
+    const review = await Review.findOne({ slug });
 
     if (!review) {
       return res.status(404).json({

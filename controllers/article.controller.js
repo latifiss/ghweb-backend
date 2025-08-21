@@ -3,9 +3,6 @@ const { uploadToR2, deleteFromR2 } = require('../utils/r2');
 
 exports.createArticle = async (req, res) => {
   try {
-    console.log('Incoming request body:', req.body);
-    console.log('Incoming files:', req.files);
-
     const {
       title,
       description,
@@ -15,19 +12,12 @@ exports.createArticle = async (req, res) => {
       isLive,
       isBreaking,
       isHeadline,
+      isCategoryHeadline,
       label,
       published_at,
     } = req.body;
 
-    // Validate required fields
     if (!title || !description || !content || !published_at || !category) {
-      console.error('Missing required fields:', {
-        title: !!title,
-        description: !!description,
-        content: !!content,
-        published_at: !!published_at,
-        category: !!category,
-      });
       return res.status(400).json({
         status: 'fail',
         message:
@@ -38,48 +28,45 @@ exports.createArticle = async (req, res) => {
     let imageUrl = null;
     let contentImageUrl = null;
 
-    // Handle file uploads
     try {
       if (req.files?.articleThumbnail) {
-        console.log('Processing article thumbnail...');
         imageUrl = await uploadToR2(
           req.files.articleThumbnail[0].buffer,
           req.files.articleThumbnail[0].mimetype,
           'articles'
         );
-        console.log('Article thumbnail uploaded:', imageUrl);
       }
 
       if (req.files?.contentThumbnail) {
-        console.log('Processing content thumbnail...');
         contentImageUrl = await uploadToR2(
           req.files.contentThumbnail[0].buffer,
           req.files.contentThumbnail[0].mimetype,
           'articles'
         );
-        console.log('Content thumbnail uploaded:', contentImageUrl);
       }
     } catch (uploadError) {
-      console.error('File upload failed:', uploadError);
       return res.status(500).json({
         status: 'error',
         message: 'Failed to upload image(s)',
       });
     }
 
-    // Handle headline articles
     if (isHeadline) {
-      console.log('Updating existing headlines...');
       await Article.updateMany(
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
     }
 
-    // Prepare content based on article type
+    if (isCategoryHeadline && category) {
+      await Article.updateMany(
+        { category: { $in: category }, isCategoryHeadline: true },
+        { $set: { isCategoryHeadline: false } }
+      );
+    }
+
     let articleContent;
     if (isLive) {
-      console.log('Creating live article content...');
       articleContent = [
         {
           content_title: title,
@@ -91,11 +78,9 @@ exports.createArticle = async (req, res) => {
         },
       ];
     } else {
-      console.log('Creating regular article content...');
       articleContent = content;
     }
 
-    // Create new article
     const article = new Article({
       title,
       description,
@@ -105,6 +90,7 @@ exports.createArticle = async (req, res) => {
       isLive: isLive || false,
       isBreaking: isBreaking || false,
       isHeadline: isHeadline || false,
+      isCategoryHeadline: isCategoryHeadline || false,
       label,
       published_at: new Date(published_at),
       image_url: imageUrl,
@@ -115,19 +101,8 @@ exports.createArticle = async (req, res) => {
       }),
     });
 
-    console.log('Article object before save:', {
-      title: article.title,
-      description: article.description,
-      contentType: isLive ? 'live' : 'regular',
-      isLive: article.isLive,
-      isBreaking: article.isBreaking,
-      isHeadline: article.isHeadline,
-    });
-
-    // Validate before save
     const validationError = article.validateSync();
     if (validationError) {
-      console.error('Validation error:', validationError);
       const errors = {};
       Object.keys(validationError.errors).forEach((key) => {
         errors[key] = validationError.errors[key].message;
@@ -140,7 +115,6 @@ exports.createArticle = async (req, res) => {
     }
 
     await article.save();
-    console.log('Article saved successfully:', article._id);
 
     res.status(201).json({
       status: 'success',
@@ -149,16 +123,7 @@ exports.createArticle = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('Error creating article:', {
-      message: err.message,
-      stack: err.stack,
-      code: err.code,
-      name: err.name,
-      errors: err.errors,
-    });
-
     if (err.code === 11000) {
-      console.error('Duplicate slug error:', err);
       return res.status(400).json({
         status: 'fail',
         message: 'Slug must be unique',
@@ -226,6 +191,22 @@ exports.updateArticle = async (req, res) => {
       );
     }
 
+    if (updateData.isCategoryHeadline && existingArticle.category) {
+      await Article.updateMany(
+        {
+          category: { $in: existingArticle.category },
+          isCategoryHeadline: true,
+        },
+        { $set: { isCategoryHeadline: false } }
+      );
+    }
+
+    if (updateData.isBreaking && !existingArticle.isBreaking) {
+      updateData.breakingExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    } else if (updateData.isBreaking === false) {
+      updateData.breakingExpiresAt = null;
+    }
+
     if (updateData.wasLive) {
       updateData.isLive = false;
     }
@@ -265,6 +246,80 @@ exports.updateArticle = async (req, res) => {
         message: 'Slug must be unique',
       });
     }
+    res.status(500).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+exports.getHeadline = async (req, res) => {
+  try {
+    const headlineArticle = await Article.findOne({ isHeadline: true }).sort({
+      published_at: -1,
+    });
+
+    if (!headlineArticle) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No headline article found',
+      });
+    }
+
+    const similarArticles = await Article.find({
+      tags: { $in: headlineArticle.tags || [] },
+      isHeadline: false,
+    })
+      .sort({ published_at: -1 })
+      .limit(3);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        headline: headlineArticle,
+        similarArticles,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+exports.getCategoryHeadline = async (req, res) => {
+  try {
+    const { category } = req.params;
+
+    const categoryHeadline = await Article.findOne({
+      category: { $in: [category] },
+      isCategoryHeadline: true,
+    }).sort({ published_at: -1 });
+
+    if (!categoryHeadline) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No category headline found',
+      });
+    }
+
+    const similarArticles = await Article.find({
+      category: { $in: [category] },
+      isCategoryHeadline: false,
+      _id: { $ne: categoryHeadline._id },
+    })
+      .sort({ published_at: -1 })
+      .limit(3);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        categoryHeadline,
+        similarArticles,
+      },
+    });
+  } catch (err) {
     res.status(500).json({
       status: 'error',
       message: err.message,
@@ -438,10 +493,8 @@ exports.getArticles = async (req, res) => {
 
 exports.getArticleById = async (req, res) => {
   try {
-    const { id } = req.params;
-    const article = await Article.findOne({
-      $or: [{ _id: id }, { slug: id }],
-    });
+    const { slug } = req.params;
+    const article = await Article.findOne({ slug });
 
     if (!article) {
       return res.status(404).json({
@@ -473,8 +526,8 @@ exports.getArticleById = async (req, res) => {
 
 exports.getSimilarArticles = async (req, res) => {
   try {
-    const { id } = req.params;
-    const article = await Article.findById(id);
+    const { slug } = req.params;
+    const article = await Article.findOne({ slug });
 
     if (!article) {
       return res.status(404).json({
@@ -485,7 +538,7 @@ exports.getSimilarArticles = async (req, res) => {
 
     const similarArticles = await Article.find({
       tags: { $in: article.tags },
-      _id: { $ne: article._id },
+      slug: { $ne: article.slug },
     }).limit(5);
 
     res.status(200).json({

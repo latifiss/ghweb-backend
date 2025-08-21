@@ -12,7 +12,7 @@ router.patch(
 );
 router.get('/', opinionController.getAllOpinions);
 router.get('/tag/:tag', opinionController.getOpinionsByTag);
-router.get('/:id', opinionController.getSingleOpinion);
+router.get('/:slug', opinionController.getSingleOpinion);
 router.delete('/:id', opinionController.deleteOpinion);
 
 module.exports = router;

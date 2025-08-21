@@ -201,10 +201,8 @@ exports.updateMusic = async (req, res) => {
 
 exports.getSingleMusic = async (req, res) => {
   try {
-    const { id } = req.params;
-    const music = await Music.findOne({
-      $or: [{ _id: id }, { slug: id }],
-    });
+    const { slug } = req.params;
+    const music = await Music.findOne({ slug });
 
     if (!music) {
       return res.status(404).json({
