@@ -16,6 +16,18 @@ const featureRouter = require('./routes/feature.routes');
 const authRouter = require('./routes/adminAuth.routes');
 const feedRouter = require('./routes/feed.routes');
 
+const nigArticleRouter = require('./routes/nigpost/article.routes');
+const nigReviewRouter = require('./routes/nigpost/review.routes');
+const nigFeedRouter = require('./routes/nigpost/feed.routes');
+
+const spfArticleRouter = require('./routes/spf/article.routes');
+const spfReviewRouter = require('./routes/spf/review.routes');
+const spfFeedRouter = require('./routes/spf/feed.routes');
+
+const zaspArticleRouter = require('./routes/zasp/article.routes');
+const zaspReviewRouter = require('./routes/zasp/review.routes');
+const zaspFeedRouter = require('./routes/zasp/feed.routes');
+
 const app = express();
 
 app.use(favicon(path.join(__dirname, 'public', 'favicon.ico')));
@@ -47,6 +59,18 @@ app.use('/api/opinion', opinionRouter);
 app.use('/api/feature', featureRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/feed', feedRouter);
+
+app.use('/api/nigpost-article', nigArticleRouter);
+app.use('/api/nigpost-review', nigReviewRouter);
+app.use('/api/nigpost-feed', nigFeedRouter);
+
+app.use('/api/spf-article', spfArticleRouter);
+app.use('/api/spf-review', spfReviewRouter);
+app.use('/api/spf-feed', spfFeedRouter);
+
+app.use('/api/zasp-article', zaspArticleRouter);
+app.use('/api/zasp-review', zaspReviewRouter);
+app.use('/api/zasp-feed', zaspFeedRouter);
 
 app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message });
