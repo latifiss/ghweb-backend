@@ -4,6 +4,8 @@ const express = require('express');
 require('dotenv').config();
 const morgan = require('morgan');
 const cors = require('cors');
+const path = require('path');
+const favicon = require('serve-favicon');
 
 const musicRouter = require('./routes/music.routes');
 const articleRouter = require('./routes/article.routes');
@@ -15,6 +17,8 @@ const authRouter = require('./routes/adminAuth.routes');
 const feedRouter = require('./routes/feed.routes');
 
 const app = express();
+
+app.use(favicon(path.join(__dirname, 'public', 'favicon.ico')));
 
 const allowedOrigins = [
   'http://localhost:3000',

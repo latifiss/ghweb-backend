@@ -1,5 +1,51 @@
 const Review = require('../models/review.model');
 const { uploadToR2, deleteFromR2 } = require('../utils/r2');
+const { getRedisClient } = require('../lib/redis');
+
+const generateCacheKey = (prefix, params) => {
+  return `${prefix}:${Object.values(params).join(':')}`;
+};
+
+const setCache = async (key, data, expiration = 432000) => {
+  try {
+    const client = await getRedisClient();
+    await client.setEx(key, expiration, JSON.stringify(data));
+  } catch (err) {
+    console.error('Redis set error:', err);
+  }
+};
+
+const getCache = async (key) => {
+  try {
+    const client = await getRedisClient();
+    const cachedData = await client.get(key);
+    return cachedData ? JSON.parse(cachedData) : null;
+  } catch (err) {
+    console.error('Redis get error:', err);
+    return null;
+  }
+};
+
+const deleteCacheByPattern = async (pattern) => {
+  try {
+    const client = await getRedisClient();
+    const keys = await client.keys(pattern);
+    if (keys.length > 0) {
+      await client.del(keys);
+    }
+  } catch (err) {
+    console.error('Redis delete error:', err);
+  }
+};
+
+const invalidateReviewCache = async () => {
+  await Promise.all([
+    deleteCacheByPattern('reviews:*'),
+    deleteCacheByPattern('review:*'),
+    deleteCacheByPattern('tag:*'),
+    deleteCacheByPattern('venue:*'),
+  ]);
+};
 
 exports.createReview = async (req, res) => {
   try {
@@ -55,6 +101,8 @@ exports.createReview = async (req, res) => {
     }
 
     await review.save();
+
+    await invalidateReviewCache();
 
     res.status(201).json({
       status: 'success',
@@ -123,6 +171,13 @@ exports.updateReview = async (req, res) => {
       runValidators: true,
     });
 
+    await Promise.all([
+      deleteCacheByPattern(`review:${review.slug}`),
+      deleteCacheByPattern(`review:${review._id}`),
+      deleteCacheByPattern('reviews:list:*'),
+      invalidateReviewCache(),
+    ]);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -146,6 +201,17 @@ exports.updateReview = async (req, res) => {
 exports.getSingleReview = async (req, res) => {
   try {
     const { slug } = req.params;
+    const cacheKey = `review:${slug}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        data: cachedData,
+      });
+    }
+
     const review = await Review.findOne({ slug });
 
     if (!review) {
@@ -155,11 +221,16 @@ exports.getSingleReview = async (req, res) => {
       });
     }
 
+    const responseData = {
+      review,
+    };
+
+    await setCache(cacheKey, responseData, 3600);
+
     res.status(200).json({
       status: 'success',
-      data: {
-        review,
-      },
+      cached: false,
+      data: responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -175,13 +246,23 @@ exports.getAllReviews = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('reviews:list', { page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [reviews, total] = await Promise.all([
       Review.find().sort({ published_at: -1 }).skip(skip).limit(limit),
       Review.countDocuments(),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       results: reviews.length,
       total,
       totalPages: Math.ceil(total / limit),
@@ -189,6 +270,14 @@ exports.getAllReviews = async (req, res) => {
       data: {
         reviews,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -205,6 +294,17 @@ exports.getReviewsByTag = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('tag:reviews', { tag, page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [reviews, total] = await Promise.all([
       Review.find({ tags: tag })
         .sort({ published_at: -1 })
@@ -213,8 +313,7 @@ exports.getReviewsByTag = async (req, res) => {
       Review.countDocuments({ tags: tag }),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       tag,
       results: reviews.length,
       total,
@@ -223,6 +322,14 @@ exports.getReviewsByTag = async (req, res) => {
       data: {
         reviews,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -239,13 +346,23 @@ exports.getReviewsByVenue = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('venue:reviews', { venue, page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [reviews, total] = await Promise.all([
       Review.find({ venue }).sort({ published_at: -1 }).skip(skip).limit(limit),
       Review.countDocuments({ venue }),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       venue,
       results: reviews.length,
       total,
@@ -254,6 +371,14 @@ exports.getReviewsByVenue = async (req, res) => {
       data: {
         reviews,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -278,6 +403,8 @@ exports.deleteReview = async (req, res) => {
     if (review.image_url) {
       await deleteFromR2(review.image_url);
     }
+
+    await invalidateReviewCache();
 
     res.status(204).json({
       status: 'success',

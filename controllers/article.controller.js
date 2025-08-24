@@ -1,5 +1,50 @@
 const { Article } = require('../models/article.model');
 const { uploadToR2, deleteFromR2 } = require('../utils/r2');
+const { getRedisClient } = require('../lib/redis');
+
+const generateCacheKey = (prefix, params) => {
+  return `${prefix}:${Object.values(params).join(':')}`;
+};
+
+const setCache = async (key, data, expiration = 432000) => {
+  try {
+    const client = await getRedisClient();
+    await client.setEx(key, expiration, JSON.stringify(data));
+  } catch (err) {
+    console.error('Redis set error:', err);
+  }
+};
+
+const getCache = async (key) => {
+  try {
+    const client = await getRedisClient();
+    const cachedData = await client.get(key);
+    return cachedData ? JSON.parse(cachedData) : null;
+  } catch (err) {
+    console.error('Redis get error:', err);
+    return null;
+  }
+};
+
+const deleteCacheByPattern = async (pattern) => {
+  try {
+    const client = await getRedisClient();
+    const keys = await client.keys(pattern);
+    if (keys.length > 0) {
+      await client.del(keys);
+    }
+  } catch (err) {
+    console.error('Redis delete error:', err);
+  }
+};
+
+const invalidateArticleCache = async () => {
+  await Promise.all([
+    deleteCacheByPattern('articles:*'),
+    deleteCacheByPattern('headline:*'),
+    deleteCacheByPattern('category:*'),
+  ]);
+};
 
 exports.createArticle = async (req, res) => {
   try {
@@ -56,6 +101,8 @@ exports.createArticle = async (req, res) => {
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
+      // Invalidate headline cache
+      await deleteCacheByPattern('headline:*');
     }
 
     if (isCategoryHeadline && category) {
@@ -63,6 +110,14 @@ exports.createArticle = async (req, res) => {
         { category: { $in: category }, isCategoryHeadline: true },
         { $set: { isCategoryHeadline: false } }
       );
+      // Invalidate category headline cache
+      if (Array.isArray(category)) {
+        for (const cat of category) {
+          await deleteCacheByPattern(`category:headline:${cat}`);
+        }
+      } else {
+        await deleteCacheByPattern(`category:headline:${category}`);
+      }
     }
 
     let articleContent;
@@ -115,6 +170,9 @@ exports.createArticle = async (req, res) => {
     }
 
     await article.save();
+
+    // Invalidate cache after creating new article
+    await invalidateArticleCache();
 
     res.status(201).json({
       status: 'success',
@@ -189,6 +247,8 @@ exports.updateArticle = async (req, res) => {
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
+      // Invalidate headline cache
+      await deleteCacheByPattern('headline:*');
     }
 
     if (updateData.isCategoryHeadline && existingArticle.category) {
@@ -199,6 +259,16 @@ exports.updateArticle = async (req, res) => {
         },
         { $set: { isCategoryHeadline: false } }
       );
+      // Invalidate category headline cache
+      if (Array.isArray(existingArticle.category)) {
+        for (const cat of existingArticle.category) {
+          await deleteCacheByPattern(`category:headline:${cat}`);
+        }
+      } else {
+        await deleteCacheByPattern(
+          `category:headline:${existingArticle.category}`
+        );
+      }
     }
 
     if (updateData.isBreaking && !existingArticle.isBreaking) {
@@ -233,6 +303,14 @@ exports.updateArticle = async (req, res) => {
       runValidators: true,
     });
 
+    // Invalidate cache for this specific article and related caches
+    await Promise.all([
+      deleteCacheByPattern(`article:${article.slug}`),
+      deleteCacheByPattern(`article:${article._id}`),
+      deleteCacheByPattern('articles:list:*'),
+      invalidateArticleCache(),
+    ]);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -255,6 +333,17 @@ exports.updateArticle = async (req, res) => {
 
 exports.getHeadline = async (req, res) => {
   try {
+    const cacheKey = 'headline:main';
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        data: cachedData,
+      });
+    }
+
     const headlineArticle = await Article.findOne({ isHeadline: true }).sort({
       published_at: -1,
     });
@@ -273,12 +362,18 @@ exports.getHeadline = async (req, res) => {
       .sort({ published_at: -1 })
       .limit(3);
 
+    const responseData = {
+      headline: headlineArticle,
+      similarArticles,
+    };
+
+    // Cache for 1 hour
+    await setCache(cacheKey, responseData, 3600);
+
     res.status(200).json({
       status: 'success',
-      data: {
-        headline: headlineArticle,
-        similarArticles,
-      },
+      cached: false,
+      data: responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -291,6 +386,16 @@ exports.getHeadline = async (req, res) => {
 exports.getCategoryHeadline = async (req, res) => {
   try {
     const { category } = req.params;
+    const cacheKey = `category:headline:${category}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        data: cachedData,
+      });
+    }
 
     const categoryHeadline = await Article.findOne({
       category: { $in: [category] },
@@ -312,12 +417,18 @@ exports.getCategoryHeadline = async (req, res) => {
       .sort({ published_at: -1 })
       .limit(3);
 
+    const responseData = {
+      categoryHeadline,
+      similarArticles,
+    };
+
+    // Cache for 1 hour
+    await setCache(cacheKey, responseData, 3600);
+
     res.status(200).json({
       status: 'success',
-      data: {
-        categoryHeadline,
-        similarArticles,
-      },
+      cached: false,
+      data: responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -377,6 +488,12 @@ exports.addLiveUpdate = async (req, res) => {
 
     await article.save();
 
+    // Invalidate cache for this article
+    await Promise.all([
+      deleteCacheByPattern(`article:${article.slug}`),
+      deleteCacheByPattern(`article:${article._id}`),
+    ]);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -417,6 +534,12 @@ exports.markAsKeyEvent = async (req, res) => {
     article.content[updateIndex].isKey = true;
     await article.save();
 
+    // Invalidate cache for this article
+    await Promise.all([
+      deleteCacheByPattern(`article:${article.slug}`),
+      deleteCacheByPattern(`article:${article._id}`),
+    ]);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -448,6 +571,12 @@ exports.endLiveArticle = async (req, res) => {
       });
     }
 
+    // Invalidate cache for this article
+    await Promise.all([
+      deleteCacheByPattern(`article:${article.slug}`),
+      deleteCacheByPattern(`article:${article._id}`),
+    ]);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -468,13 +597,23 @@ exports.getArticles = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('articles:list', { page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [articles, total] = await Promise.all([
       Article.find().sort({ published_at: -1 }).skip(skip).limit(limit),
       Article.countDocuments(),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       results: articles.length,
       total,
       totalPages: Math.ceil(total / limit),
@@ -482,6 +621,15 @@ exports.getArticles = async (req, res) => {
       data: {
         articles,
       },
+    };
+
+    // Cache for 5 minutes (shorter TTL for listing pages)
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -494,6 +642,17 @@ exports.getArticles = async (req, res) => {
 exports.getArticleById = async (req, res) => {
   try {
     const { slug } = req.params;
+    const cacheKey = `article:${slug}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        data: cachedData,
+      });
+    }
+
     const article = await Article.findOne({ slug });
 
     if (!article) {
@@ -507,14 +666,18 @@ exports.getArticleById = async (req, res) => {
       ? article.content.filter((item) => item.isKey)
       : null;
 
-    const response = {
+    const responseData = {
       ...article.toObject(),
       keyEvents,
     };
 
+    // Cache for 1 hour
+    await setCache(cacheKey, responseData, 3600);
+
     res.status(200).json({
       status: 'success',
-      data: response,
+      cached: false,
+      data: responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -527,6 +690,17 @@ exports.getArticleById = async (req, res) => {
 exports.getSimilarArticles = async (req, res) => {
   try {
     const { slug } = req.params;
+    const cacheKey = `article:similar:${slug}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        data: cachedData,
+      });
+    }
+
     const article = await Article.findOne({ slug });
 
     if (!article) {
@@ -541,11 +715,17 @@ exports.getSimilarArticles = async (req, res) => {
       slug: { $ne: article.slug },
     }).limit(5);
 
+    const responseData = {
+      articles: similarArticles,
+    };
+
+    // Cache for 30 minutes
+    await setCache(cacheKey, responseData, 1800);
+
     res.status(200).json({
       status: 'success',
-      data: {
-        articles: similarArticles,
-      },
+      cached: false,
+      data: responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -562,6 +742,21 @@ exports.getArticlesByCategory = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('articles:category', {
+      category,
+      page,
+      limit,
+    });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [articles, total] = await Promise.all([
       Article.find({ category })
         .sort({ published_at: -1 })
@@ -570,8 +765,7 @@ exports.getArticlesByCategory = async (req, res) => {
       Article.countDocuments({ category }),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       category,
       results: articles.length,
       total,
@@ -580,6 +774,15 @@ exports.getArticlesByCategory = async (req, res) => {
       data: {
         articles,
       },
+    };
+
+    // Cache for 5 minutes
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -614,6 +817,9 @@ exports.deleteArticle = async (req, res) => {
     }
 
     await article.deleteOne();
+
+    // Invalidate all article-related cache
+    await invalidateArticleCache();
 
     res.status(200).json({
       status: 'success',

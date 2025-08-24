@@ -1,5 +1,50 @@
 const Music = require('../models/music.model');
 const { uploadToR2, deleteFromR2 } = require('../utils/r2');
+const { getRedisClient } = require('../lib/redis');
+
+const generateCacheKey = (prefix, params) => {
+  return `${prefix}:${Object.values(params).join(':')}`;
+};
+
+const setCache = async (key, data, expiration = 432000) => {
+  try {
+    const client = await getRedisClient();
+    await client.setEx(key, expiration, JSON.stringify(data));
+  } catch (err) {
+    console.error('Redis set error:', err);
+  }
+};
+
+const getCache = async (key) => {
+  try {
+    const client = await getRedisClient();
+    const cachedData = await client.get(key);
+    return cachedData ? JSON.parse(cachedData) : null;
+  } catch (err) {
+    console.error('Redis get error:', err);
+    return null;
+  }
+};
+
+const deleteCacheByPattern = async (pattern) => {
+  try {
+    const client = await getRedisClient();
+    const keys = await client.keys(pattern);
+    if (keys.length > 0) {
+      await client.del(keys);
+    }
+  } catch (err) {
+    console.error('Redis delete error:', err);
+  }
+};
+
+const invalidateMusicCache = async () => {
+  await Promise.all([
+    deleteCacheByPattern('music:*'),
+    deleteCacheByPattern('musics:*'),
+    deleteCacheByPattern('genre:*'),
+  ]);
+};
 
 exports.createMusic = async (req, res) => {
   try {
@@ -93,6 +138,8 @@ exports.createMusic = async (req, res) => {
 
     await music.save();
 
+    await invalidateMusicCache();
+
     res.status(201).json({
       status: 'success',
       data: {
@@ -179,6 +226,13 @@ exports.updateMusic = async (req, res) => {
       runValidators: true,
     });
 
+    await Promise.all([
+      deleteCacheByPattern(`music:${music.slug}`),
+      deleteCacheByPattern(`music:${music._id}`),
+      deleteCacheByPattern('musics:list:*'),
+      invalidateMusicCache(),
+    ]);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -202,6 +256,17 @@ exports.updateMusic = async (req, res) => {
 exports.getSingleMusic = async (req, res) => {
   try {
     const { slug } = req.params;
+    const cacheKey = `music:${slug}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        data: cachedData,
+      });
+    }
+
     const music = await Music.findOne({ slug });
 
     if (!music) {
@@ -211,11 +276,16 @@ exports.getSingleMusic = async (req, res) => {
       });
     }
 
+    const responseData = {
+      music,
+    };
+
+    await setCache(cacheKey, responseData, 3600);
+
     res.status(200).json({
       status: 'success',
-      data: {
-        music,
-      },
+      cached: false,
+      data: responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -231,13 +301,23 @@ exports.getAllMusic = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('musics:list', { page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [music, total] = await Promise.all([
       Music.find().sort({ published_at: -1 }).skip(skip).limit(limit),
       Music.countDocuments(),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       results: music.length,
       total,
       totalPages: Math.ceil(total / limit),
@@ -245,6 +325,14 @@ exports.getAllMusic = async (req, res) => {
       data: {
         music,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -261,6 +349,17 @@ exports.getAllMusicByGenre = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('genre:music', { genre, page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [music, total] = await Promise.all([
       Music.find({ tags: genre })
         .sort({ published_at: -1 })
@@ -269,8 +368,7 @@ exports.getAllMusicByGenre = async (req, res) => {
       Music.countDocuments({ tags: genre }),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       genre,
       results: music.length,
       total,
@@ -279,6 +377,14 @@ exports.getAllMusicByGenre = async (req, res) => {
       data: {
         music,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -303,6 +409,8 @@ exports.deleteMusic = async (req, res) => {
     if (music.image_url) {
       await deleteFromR2(music.image_url);
     }
+
+    await invalidateMusicCache();
 
     res.status(204).json({
       status: 'success',

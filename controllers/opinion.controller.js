@@ -1,5 +1,50 @@
 const Opinion = require('../models/opinion.model');
 const { uploadToR2, deleteFromR2 } = require('../utils/r2');
+const { getRedisClient } = require('../lib/redis');
+
+const generateCacheKey = (prefix, params) => {
+  return `${prefix}:${Object.values(params).join(':')}`;
+};
+
+const setCache = async (key, data, expiration = 432000) => {
+  try {
+    const client = await getRedisClient();
+    await client.setEx(key, expiration, JSON.stringify(data));
+  } catch (err) {
+    console.error('Redis set error:', err);
+  }
+};
+
+const getCache = async (key) => {
+  try {
+    const client = await getRedisClient();
+    const cachedData = await client.get(key);
+    return cachedData ? JSON.parse(cachedData) : null;
+  } catch (err) {
+    console.error('Redis get error:', err);
+    return null;
+  }
+};
+
+const deleteCacheByPattern = async (pattern) => {
+  try {
+    const client = await getRedisClient();
+    const keys = await client.keys(pattern);
+    if (keys.length > 0) {
+      await client.del(keys);
+    }
+  } catch (err) {
+    console.error('Redis delete error:', err);
+  }
+};
+
+const invalidateOpinionCache = async () => {
+  await Promise.all([
+    deleteCacheByPattern('opinions:*'),
+    deleteCacheByPattern('opinion:*'),
+    deleteCacheByPattern('tag:*'),
+  ]);
+};
 
 exports.createOpinion = async (req, res) => {
   try {
@@ -43,6 +88,8 @@ exports.createOpinion = async (req, res) => {
     }
 
     await opinion.save();
+
+    await invalidateOpinionCache();
 
     res.status(201).json({
       status: 'success',
@@ -111,6 +158,13 @@ exports.updateOpinion = async (req, res) => {
       runValidators: true,
     });
 
+    await Promise.all([
+      deleteCacheByPattern(`opinion:${opinion.slug}`),
+      deleteCacheByPattern(`opinion:${opinion._id}`),
+      deleteCacheByPattern('opinions:list:*'),
+      invalidateOpinionCache(),
+    ]);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -134,6 +188,17 @@ exports.updateOpinion = async (req, res) => {
 exports.getSingleOpinion = async (req, res) => {
   try {
     const { slug } = req.params;
+    const cacheKey = `opinion:${slug}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        data: cachedData,
+      });
+    }
+
     const opinion = await Opinion.findOne({ slug });
 
     if (!opinion) {
@@ -143,11 +208,16 @@ exports.getSingleOpinion = async (req, res) => {
       });
     }
 
+    const responseData = {
+      opinion,
+    };
+
+    await setCache(cacheKey, responseData, 3600);
+
     res.status(200).json({
       status: 'success',
-      data: {
-        opinion,
-      },
+      cached: false,
+      data: responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -163,13 +233,23 @@ exports.getAllOpinions = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('opinions:list', { page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [opinions, total] = await Promise.all([
       Opinion.find().sort({ published_at: -1 }).skip(skip).limit(limit),
       Opinion.countDocuments(),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       results: opinions.length,
       total,
       totalPages: Math.ceil(total / limit),
@@ -177,6 +257,14 @@ exports.getAllOpinions = async (req, res) => {
       data: {
         opinions,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -193,6 +281,17 @@ exports.getOpinionsByTag = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('tag:opinions', { tag, page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [opinions, total] = await Promise.all([
       Opinion.find({ tags: tag })
         .sort({ published_at: -1 })
@@ -201,8 +300,7 @@ exports.getOpinionsByTag = async (req, res) => {
       Opinion.countDocuments({ tags: tag }),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       tag,
       results: opinions.length,
       total,
@@ -211,6 +309,14 @@ exports.getOpinionsByTag = async (req, res) => {
       data: {
         opinions,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -235,6 +341,8 @@ exports.deleteOpinion = async (req, res) => {
     if (opinion.image_url) {
       await deleteFromR2(opinion.image_url);
     }
+
+    await invalidateOpinionCache();
 
     res.status(204).json({
       status: 'success',

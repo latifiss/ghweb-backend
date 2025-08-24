@@ -1,5 +1,51 @@
 const Movie = require('../models/movie.model');
 const { uploadToR2, deleteFromR2 } = require('../utils/r2');
+const { getRedisClient } = require('../lib/redis');
+
+const generateCacheKey = (prefix, params) => {
+  return `${prefix}:${Object.values(params).join(':')}`;
+};
+
+const setCache = async (key, data, expiration = 432000) => {
+  try {
+    const client = await getRedisClient();
+    await client.setEx(key, expiration, JSON.stringify(data));
+  } catch (err) {
+    console.error('Redis set error:', err);
+  }
+};
+
+const getCache = async (key) => {
+  try {
+    const client = await getRedisClient();
+    const cachedData = await client.get(key);
+    return cachedData ? JSON.parse(cachedData) : null;
+  } catch (err) {
+    console.error('Redis get error:', err);
+    return null;
+  }
+};
+
+const deleteCacheByPattern = async (pattern) => {
+  try {
+    const client = await getRedisClient();
+    const keys = await client.keys(pattern);
+    if (keys.length > 0) {
+      await client.del(keys);
+    }
+  } catch (err) {
+    console.error('Redis delete error:', err);
+  }
+};
+
+const invalidateMovieCache = async () => {
+  await Promise.all([
+    deleteCacheByPattern('movies:*'),
+    deleteCacheByPattern('movie:*'),
+    deleteCacheByPattern('genre:*'),
+    deleteCacheByPattern('category:*'),
+  ]);
+};
 
 exports.createMovie = async (req, res) => {
   try {
@@ -89,6 +135,8 @@ exports.createMovie = async (req, res) => {
 
     await movie.save();
 
+    await invalidateMovieCache();
+
     res.status(201).json({
       status: 'success',
       data: {
@@ -175,6 +223,13 @@ exports.updateMovie = async (req, res) => {
       runValidators: true,
     });
 
+    await Promise.all([
+      deleteCacheByPattern(`movie:${movie.slug}`),
+      deleteCacheByPattern(`movie:${movie._id}`),
+      deleteCacheByPattern('movies:list:*'),
+      invalidateMovieCache(),
+    ]);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -198,6 +253,17 @@ exports.updateMovie = async (req, res) => {
 exports.getSingleMovie = async (req, res) => {
   try {
     const { slug } = req.params;
+    const cacheKey = `movie:${slug}`;
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        data: cachedData,
+      });
+    }
+
     const movie = await Movie.findOne({ slug });
 
     if (!movie) {
@@ -207,11 +273,16 @@ exports.getSingleMovie = async (req, res) => {
       });
     }
 
+    const responseData = {
+      movie,
+    };
+
+    await setCache(cacheKey, responseData, 3600);
+
     res.status(200).json({
       status: 'success',
-      data: {
-        movie,
-      },
+      cached: false,
+      data: responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -227,13 +298,23 @@ exports.getAllMovies = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('movies:list', { page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [movies, total] = await Promise.all([
       Movie.find().sort({ published_at: -1 }).skip(skip).limit(limit),
       Movie.countDocuments(),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       results: movies.length,
       total,
       totalPages: Math.ceil(total / limit),
@@ -241,6 +322,14 @@ exports.getAllMovies = async (req, res) => {
       data: {
         movies,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -257,6 +346,21 @@ exports.getMoviesByCategory = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('category:movies', {
+      category,
+      page,
+      limit,
+    });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [movies, total] = await Promise.all([
       Movie.find({ category })
         .sort({ published_at: -1 })
@@ -265,8 +369,7 @@ exports.getMoviesByCategory = async (req, res) => {
       Movie.countDocuments({ category }),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       category,
       results: movies.length,
       total,
@@ -275,6 +378,14 @@ exports.getMoviesByCategory = async (req, res) => {
       data: {
         movies,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -291,13 +402,23 @@ exports.getMoviesByGenre = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const cacheKey = generateCacheKey('genre:movies', { genre, page, limit });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
     const [movies, total] = await Promise.all([
       Movie.find({ genre }).sort({ published_at: -1 }).skip(skip).limit(limit),
       Movie.countDocuments({ genre }),
     ]);
 
-    res.status(200).json({
-      status: 'success',
+    const responseData = {
       genre,
       results: movies.length,
       total,
@@ -306,6 +427,14 @@ exports.getMoviesByGenre = async (req, res) => {
       data: {
         movies,
       },
+    };
+
+    await setCache(cacheKey, responseData, 300);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
     });
   } catch (err) {
     res.status(500).json({
@@ -330,6 +459,8 @@ exports.deleteMovie = async (req, res) => {
     if (movie.image_url) {
       await deleteFromR2(movie.image_url);
     }
+
+    await invalidateMovieCache();
 
     res.status(204).json({
       status: 'success',
