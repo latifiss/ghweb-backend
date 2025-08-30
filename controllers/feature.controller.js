@@ -116,10 +116,10 @@ exports.createFeature = async (req, res) => {
 
 exports.updateFeature = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { slug } = req.params;
     const updateData = req.body;
 
-    const existingFeature = await Feature.findById(id);
+    const existingFeature = await Feature.findOne({ slug: slug });
     if (!existingFeature) {
       return res.status(404).json({
         status: 'fail',
@@ -142,7 +142,7 @@ exports.updateFeature = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const feature = await Feature.findByIdAndUpdate(id, updateData, {
+    const feature = await Feature.findOneAndUpdate({ slug: slug }, updateData, {
       new: true,
       runValidators: true,
     });

@@ -13,7 +13,7 @@ router.post(
   zasparticleController.createArticle
 );
 router.put(
-  '/:id',
+  '/:slug',
   uploadMultiple.fields([
     { name: 'articleThumbnail', maxCount: 1 },
     { name: 'contentThumbnail', maxCount: 1 },

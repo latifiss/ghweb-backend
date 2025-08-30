@@ -159,10 +159,10 @@ exports.createMovie = async (req, res) => {
 
 exports.updateMovie = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { slug } = req.params;
     const updateData = req.body;
 
-    const existingMovie = await Movie.findById(id);
+    const existingMovie = await Movie.findOne({ slug: slug });
     if (!existingMovie) {
       return res.status(404).json({
         status: 'fail',
@@ -218,7 +218,7 @@ exports.updateMovie = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const movie = await Movie.findByIdAndUpdate(id, updateData, {
+    const movie = await Movie.findOneAndUpdate({ slug: slug }, updateData, {
       new: true,
       runValidators: true,
     });

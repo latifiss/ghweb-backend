@@ -193,10 +193,10 @@ exports.createArticle = async (req, res) => {
 
 exports.updateArticle = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { slug } = req.params;
     const updateData = req.body;
 
-    const existingArticle = await SpfArticle.findById(id);
+    const existingArticle = await SpfArticle.findOne({ slug: slug });
     if (!existingArticle) {
       return res.status(404).json({
         status: 'fail',
@@ -293,10 +293,14 @@ exports.updateArticle = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const article = await SpfArticle.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    });
+    const article = await SpfArticle.findOneAndUpdate(
+      { slug: slug },
+      updateData,
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
 
     await Promise.all([
       deleteCacheByPattern(`article:${article.slug}`),

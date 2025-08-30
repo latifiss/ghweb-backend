@@ -117,7 +117,7 @@ exports.createReview = async (req, res) => {
         message: 'Slug must be unique',
       });
     }
-    res.status極端(500).json({
+    res.status(500).json({
       status: 'error',
       message: err.message,
     });
@@ -126,10 +126,10 @@ exports.createReview = async (req, res) => {
 
 exports.updateReview = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { slug } = req.params;
     const updateData = req.body;
 
-    const existingReview = await ZaspReview.findById(id);
+    const existingReview = await ZaspReview.findOne({ slug: slug });
     if (!existingReview) {
       return res.status(404).json({
         status: 'fail',
@@ -151,7 +151,7 @@ exports.updateReview = async (req, res) => {
     if (updateData.title) {
       updateData.slug = existingReview.generateSlug(updateData.title);
       updateData.meta_title = existingReview.generateMetaTitle(
-        update極端.title
+        updateData.title
       );
     }
 
@@ -166,14 +166,18 @@ exports.updateReview = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const review = await ZaspReview.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    });
+    const review = await ZaspReview.findOneAndUpdate(
+      { slug: slug },
+      updateData,
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
 
     await Promise.all([
       deleteCacheByPattern(`review:${review.slug}`),
-      deleteCache極端(`review:${review._id}`),
+      deleteCacheByPattern(`review:${review._id}`),
       deleteCacheByPattern('reviews:list:*'),
       invalidateReviewCache(),
     ]);

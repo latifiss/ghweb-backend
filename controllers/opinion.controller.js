@@ -113,10 +113,10 @@ exports.createOpinion = async (req, res) => {
 
 exports.updateOpinion = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { slug } = req.params;
     const updateData = req.body;
 
-    const existingOpinion = await Opinion.findById(id);
+    const existingOpinion = await Opinion.findOne({ slug: slug });
     if (!existingOpinion) {
       return res.status(404).json({
         status: 'fail',
@@ -153,7 +153,7 @@ exports.updateOpinion = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const opinion = await Opinion.findByIdAndUpdate(id, updateData, {
+    const opinion = await Opinion.findOneAndUpdate({ slug: slug }, updateData, {
       new: true,
       runValidators: true,
     });

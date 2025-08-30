@@ -6,7 +6,7 @@ const router = express.Router();
 
 router.post('/', upload.single('image_url'), spfreviewController.createReview);
 router.patch(
-  '/:id',
+  '/:slug',
   upload.single('image_url'),
   spfreviewController.updateReview
 );

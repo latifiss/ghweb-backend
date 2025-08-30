@@ -126,10 +126,10 @@ exports.createReview = async (req, res) => {
 
 exports.updateReview = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { slug } = req.params;
     const updateData = req.body;
 
-    const existingReview = await Review.findById(id);
+    const existingReview = await Review.findOne({ slug: slug });
     if (!existingReview) {
       return res.status(404).json({
         status: 'fail',
@@ -166,7 +166,7 @@ exports.updateReview = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const review = await Review.findByIdAndUpdate(id, updateData, {
+    const review = await Review.findOneAndUpdate({ slug: slug }, updateData, {
       new: true,
       runValidators: true,
     });
