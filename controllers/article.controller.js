@@ -197,10 +197,10 @@ exports.createArticle = async (req, res) => {
 
 exports.updateArticle = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { slug } = req.params;
     const updateData = req.body;
 
-    const existingArticle = await Article.findById(id);
+    const existingArticle = await Article.findOne({ slug: slug });
     if (!existingArticle) {
       return res.status(404).json({
         status: 'fail',
@@ -247,7 +247,6 @@ exports.updateArticle = async (req, res) => {
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
-      // Invalidate headline cache
       await deleteCacheByPattern('headline:*');
     }
 
@@ -259,7 +258,6 @@ exports.updateArticle = async (req, res) => {
         },
         { $set: { isCategoryHeadline: false } }
       );
-      // Invalidate category headline cache
       if (Array.isArray(existingArticle.category)) {
         for (const cat of existingArticle.category) {
           await deleteCacheByPattern(`category:headline:${cat}`);
@@ -298,12 +296,11 @@ exports.updateArticle = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const article = await Article.findByIdAndUpdate(id, updateData, {
+    const article = await Article.findOneAndUpdate({ slug: slug }, updateData, {
       new: true,
       runValidators: true,
     });
 
-    // Invalidate cache for this specific article and related caches
     await Promise.all([
       deleteCacheByPattern(`article:${article.slug}`),
       deleteCacheByPattern(`article:${article._id}`),

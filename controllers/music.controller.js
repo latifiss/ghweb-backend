@@ -162,10 +162,10 @@ exports.createMusic = async (req, res) => {
 
 exports.updateMusic = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { slug } = req.params;
     const updateData = req.body;
 
-    const existingMusic = await Music.findById(id);
+    const existingMusic = await Music.findOne({ slug: slug });
     if (!existingMusic) {
       return res.status(404).json({
         status: 'fail',
@@ -221,7 +221,7 @@ exports.updateMusic = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const music = await Music.findByIdAndUpdate(id, updateData, {
+    const music = await Music.findOneAndUpdate({ slug: slug }, updateData, {
       new: true,
       runValidators: true,
     });

@@ -5,7 +5,7 @@ const { upload } = require('../utils/multer');
 const router = express.Router();
 
 router.post('/', upload.single('image_url'), reviewController.createReview);
-router.patch('/:id', upload.single('image_url'), reviewController.updateReview);
+router.put('/:slug', upload.single('image_url'), reviewController.updateReview);
 router.get('/', reviewController.getAllReviews);
 router.get('/tag/:tag', reviewController.getReviewsByTag);
 router.get('/venue/:venue', reviewController.getReviewsByVenue);

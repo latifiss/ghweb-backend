@@ -126,10 +126,10 @@ exports.createReview = async (req, res) => {
 
 exports.updateReview = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { slug } = req.params;
     const updateData = req.body;
 
-    const existingReview = await SpfReview.findById(id);
+    const existingReview = await SpfReview.findOne({ slug: slug });
     if (!existingReview) {
       return res.status(404).json({
         status: 'fail',
@@ -151,7 +151,7 @@ exports.updateReview = async (req, res) => {
     if (updateData.title) {
       updateData.slug = existingReview.generateSlug(updateData.title);
       updateData.meta_title = existingReview.generateMetaTitle(
-        update極端.title
+        updateData.title
       );
     }
 
@@ -166,14 +166,18 @@ exports.updateReview = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const review = await SpfReview.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    });
+    const review = await SpfReview.findOneAndUpdate(
+      { slug: slug },
+      updateData,
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
 
     await Promise.all([
       deleteCacheByPattern(`review:${review.slug}`),
-      deleteCache極端(`review:${review._id}`),
+      deleteCacheByPattern(`review:${review._id}`),
       deleteCacheByPattern('reviews:list:*'),
       invalidateReviewCache(),
     ]);
