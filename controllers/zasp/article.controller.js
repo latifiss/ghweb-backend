@@ -106,33 +106,30 @@ exports.createArticle = async (req, res) => {
 
     if (isCategoryHeadline && category) {
       await ZaspArticle.updateMany(
-        { category: { $in: category }, isCategoryHeadline: true },
+        {
+          category: { $in: Array.isArray(category) ? category : [category] },
+          isCategoryHeadline: true,
+        },
         { $set: { isCategoryHeadline: false } }
       );
-      if (Array.isArray(category)) {
-        for (const cat of category) {
-          await deleteCacheByPattern(`category:headline:${cat}`);
-        }
-      } else {
-        await deleteCacheByPattern(`category:headline:${category}`);
+      const cats = Array.isArray(category) ? category : [category];
+      for (const cat of cats) {
+        await deleteCacheByPattern(`category:headline:${cat}`);
       }
     }
 
-    let articleContent;
-    if (isLive) {
-      articleContent = [
-        {
-          content_title: title,
-          content_description: description,
-          content_detail: content,
-          content_image_url: contentImageUrl || imageUrl,
-          content_published_at: new Date(published_at),
-          isKey: false,
-        },
-      ];
-    } else {
-      articleContent = content;
-    }
+    const articleContent = isLive
+      ? [
+          {
+            content_title: title,
+            content_description: description,
+            content_detail: content,
+            content_image_url: contentImageUrl || imageUrl,
+            content_published_at: new Date(published_at),
+            isKey: false,
+          },
+        ]
+      : content;
 
     const article = new ZaspArticle({
       title,
@@ -140,10 +137,10 @@ exports.createArticle = async (req, res) => {
       content: articleContent,
       category: Array.isArray(category) ? category : [category],
       tags: tags || '',
-      isLive: isLive || false,
-      isBreaking: isBreaking || false,
-      isHeadline: isHeadline || false,
-      isCategoryHeadline: isCategoryHeadline || false,
+      isLive: !!isLive,
+      isBreaking: !!isBreaking,
+      isHeadline: !!isHeadline,
+      isCategoryHeadline: !!isCategoryHeadline,
       label,
       published_at: new Date(published_at),
       image_url: imageUrl,
@@ -172,9 +169,7 @@ exports.createArticle = async (req, res) => {
 
     res.status(201).json({
       status: 'success',
-      data: {
-        article,
-      },
+      data: { article },
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -194,9 +189,9 @@ exports.createArticle = async (req, res) => {
 exports.updateArticle = async (req, res) => {
   try {
     const { slug } = req.params;
-    const updateData = req.body;
+    const updateData = { ...req.body };
 
-    const existingArticle = await ZaspArticle.findOne({ slug: slug });
+    const existingArticle = await ZaspArticle.findOne({ slug });
     if (!existingArticle) {
       return res.status(404).json({
         status: 'fail',
@@ -216,26 +211,14 @@ exports.updateArticle = async (req, res) => {
     }
 
     if (req.files?.contentThumbnail) {
-      if (existingArticle.content?.[0]?.content_image_url) {
-        await deleteFromR2(existingArticle.content[0].content_image_url);
-      }
-      updateData.content = existingArticle.content.map((item, index) => {
-        if (index === 0) {
-          return {
-            ...item,
-            content_image_url: req.files.contentThumbnail[0].buffer
-              ? uploadToR2(
-                  req.files.contentThumbnail[0].buffer,
-                  req.files.contentThumbnail[0].mimetype,
-                  'articles'
-                )
-                  .then((url) => url)
-                  .catch((err) => console.error(err))
-              : item.content_image_url,
-          };
-        }
-        return item;
-      });
+      const contentImageUrl = await uploadToR2(
+        req.files.contentThumbnail[0].buffer,
+        req.files.contentThumbnail[0].mimetype,
+        'articles'
+      );
+      updateData.content = existingArticle.content.map((item, index) =>
+        index === 0 ? { ...item, content_image_url: contentImageUrl } : item
+      );
     }
 
     if (updateData.isHeadline) {
@@ -254,14 +237,8 @@ exports.updateArticle = async (req, res) => {
         },
         { $set: { isCategoryHeadline: false } }
       );
-      if (Array.isArray(existingArticle.category)) {
-        for (const cat of existingArticle.category) {
-          await deleteCacheByPattern(`category:headline:${cat}`);
-        }
-      } else {
-        await deleteCacheByPattern(
-          `category:headline:${existingArticle.category}`
-        );
+      for (const cat of existingArticle.category) {
+        await deleteCacheByPattern(`category:headline:${cat}`);
       }
     }
 
@@ -293,14 +270,10 @@ exports.updateArticle = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const article = await ZaspArticle.findOneAndUpdate(
-      { slug: slug },
-      updateData,
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
+    const article = await ZaspArticle.findOneAndUpdate({ slug }, updateData, {
+      new: true,
+      runValidators: true,
+    });
 
     await Promise.all([
       deleteCacheByPattern(`article:${article.slug}`),
@@ -311,9 +284,7 @@ exports.updateArticle = async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      data: {
-        article,
-      },
+      data: { article },
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -322,6 +293,7 @@ exports.updateArticle = async (req, res) => {
         message: 'Slug must be unique',
       });
     }
+
     res.status(500).json({
       status: 'error',
       message: err.message,

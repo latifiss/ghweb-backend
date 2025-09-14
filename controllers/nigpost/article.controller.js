@@ -74,7 +74,7 @@ exports.createArticle = async (req, res) => {
     let contentImageUrl = null;
 
     try {
-      if (req.files?.articleThumbnail) {
+      if (req.files?.articleThumbnail?.[0]) {
         imageUrl = await uploadToR2(
           req.files.articleThumbnail[0].buffer,
           req.files.articleThumbnail[0].mimetype,
@@ -82,7 +82,7 @@ exports.createArticle = async (req, res) => {
         );
       }
 
-      if (req.files?.contentThumbnail) {
+      if (req.files?.contentThumbnail?.[0]) {
         contentImageUrl = await uploadToR2(
           req.files.contentThumbnail[0].buffer,
           req.files.contentThumbnail[0].mimetype,
@@ -105,34 +105,30 @@ exports.createArticle = async (req, res) => {
     }
 
     if (isCategoryHeadline && category) {
+      const categories = Array.isArray(category) ? category : [category];
       await NigArticle.updateMany(
-        { category: { $in: category }, isCategoryHeadline: true },
+        { category: { $in: categories }, isCategoryHeadline: true },
         { $set: { isCategoryHeadline: false } }
       );
-      if (Array.isArray(category)) {
-        for (const cat of category) {
-          await deleteCacheByPattern(`category:headline:${cat}`);
-        }
-      } else {
-        await deleteCacheByPattern(`category:headline:${category}`);
-      }
+      await Promise.all(
+        categories.map((cat) =>
+          deleteCacheByPattern(`category:headline:${cat}`)
+        )
+      );
     }
 
-    let articleContent;
-    if (isLive) {
-      articleContent = [
-        {
-          content_title: title,
-          content_description: description,
-          content_detail: content,
-          content_image_url: contentImageUrl || imageUrl,
-          content_published_at: new Date(published_at),
-          isKey: false,
-        },
-      ];
-    } else {
-      articleContent = content;
-    }
+    const articleContent = isLive
+      ? [
+          {
+            content_title: title,
+            content_description: description,
+            content_detail: content,
+            content_image_url: contentImageUrl || imageUrl,
+            content_published_at: new Date(published_at),
+            isKey: false,
+          },
+        ]
+      : content;
 
     const article = new NigArticle({
       title,
@@ -172,9 +168,7 @@ exports.createArticle = async (req, res) => {
 
     res.status(201).json({
       status: 'success',
-      data: {
-        article,
-      },
+      data: { article },
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -194,9 +188,9 @@ exports.createArticle = async (req, res) => {
 exports.updateArticle = async (req, res) => {
   try {
     const { slug } = req.params;
-    const updateData = req.body;
+    const updateData = { ...req.body };
 
-    const existingArticle = await NigArticle.findOne({ slug: slug });
+    const existingArticle = await NigArticle.findOne({ slug });
     if (!existingArticle) {
       return res.status(404).json({
         status: 'fail',
@@ -204,7 +198,7 @@ exports.updateArticle = async (req, res) => {
       });
     }
 
-    if (req.files?.articleThumbnail) {
+    if (req.files?.articleThumbnail?.[0]) {
       if (existingArticle.image_url) {
         await deleteFromR2(existingArticle.image_url);
       }
@@ -215,54 +209,48 @@ exports.updateArticle = async (req, res) => {
       );
     }
 
-    if (req.files?.contentThumbnail) {
+    if (req.files?.contentThumbnail?.[0]) {
       if (existingArticle.content?.[0]?.content_image_url) {
         await deleteFromR2(existingArticle.content[0].content_image_url);
       }
-      updateData.content = existingArticle.content.map((item, index) => {
-        if (index === 0) {
-          return {
-            ...item,
-            content_image_url: req.files.contentThumbnail[0].buffer
-              ? uploadToR2(
-                  req.files.contentThumbnail[0].buffer,
-                  req.files.contentThumbnail[0].mimetype,
-                  'articles'
-                )
-                  .then((url) => url)
-                  .catch((err) => console.error(err))
-              : item.content_image_url,
-          };
-        }
-        return item;
-      });
+      const newContentImageUrl = await uploadToR2(
+        req.files.contentThumbnail[0].buffer,
+        req.files.contentThumbnail[0].mimetype,
+        'articles'
+      );
+      updateData.content = existingArticle.content.map((item, index) =>
+        index === 0 ? { ...item, content_image_url: newContentImageUrl } : item
+      );
     }
 
-    if (updateData.isHeadline) {
+    if (updateData.isHeadline && !existingArticle.isHeadline) {
       await NigArticle.updateMany(
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
       await deleteCacheByPattern('headline:*');
+    } else if (!updateData.isHeadline && existingArticle.isHeadline) {
+      updateData.isHeadline = false;
     }
 
-    if (updateData.isCategoryHeadline && existingArticle.category) {
+    if (updateData.isCategoryHeadline && !existingArticle.isCategoryHeadline) {
+      const categories = Array.isArray(existingArticle.category)
+        ? existingArticle.category
+        : [existingArticle.category];
       await NigArticle.updateMany(
-        {
-          category: { $in: existingArticle.category },
-          isCategoryHeadline: true,
-        },
+        { category: { $in: categories }, isCategoryHeadline: true },
         { $set: { isCategoryHeadline: false } }
       );
-      if (Array.isArray(existingArticle.category)) {
-        for (const cat of existingArticle.category) {
-          await deleteCacheByPattern(`category:headline:${cat}`);
-        }
-      } else {
-        await deleteCacheByPattern(
-          `category:headline:${existingArticle.category}`
-        );
-      }
+      await Promise.all(
+        categories.map((cat) =>
+          deleteCacheByPattern(`category:headline:${cat}`)
+        )
+      );
+    } else if (
+      !updateData.isCategoryHeadline &&
+      existingArticle.isCategoryHeadline
+    ) {
+      updateData.isCategoryHeadline = false;
     }
 
     if (updateData.isBreaking && !existingArticle.isBreaking) {
@@ -271,36 +259,24 @@ exports.updateArticle = async (req, res) => {
       updateData.breakingExpiresAt = null;
     }
 
-    if (updateData.wasLive) {
-      updateData.isLive = false;
-    }
-
-    if (updateData.title) {
+    if (updateData.wasLive) updateData.isLive = false;
+    if (updateData.title)
       updateData.meta_title = NigArticle.prototype.generateMetaTitle(
         updateData.title
       );
-    }
-
-    if (updateData.description) {
+    if (updateData.description)
       updateData.meta_description =
         NigArticle.prototype.generateMetaDescription({
           title: updateData.title || existingArticle.title,
           description: updateData.description,
         });
-    }
-
-    if (updateData.published_at) {
+    if (updateData.published_at)
       updateData.published_at = new Date(updateData.published_at);
-    }
 
-    const article = await NigArticle.findOneAndUpdate(
-      { slug: slug },
-      updateData,
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
+    const article = await NigArticle.findOneAndUpdate({ slug }, updateData, {
+      new: true,
+      runValidators: true,
+    });
 
     await Promise.all([
       deleteCacheByPattern(`article:${article.slug}`),
@@ -311,9 +287,7 @@ exports.updateArticle = async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      data: {
-        article,
-      },
+      data: { article },
     });
   } catch (err) {
     if (err.code === 11000) {
