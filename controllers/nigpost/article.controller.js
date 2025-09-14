@@ -166,22 +166,14 @@ exports.createArticle = async (req, res) => {
     await article.save();
     await invalidateArticleCache();
 
-    res.status(201).json({
-      status: 'success',
-      data: { article },
-    });
+    res.status(201).json({ status: 'success', data: { article } });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Slug must be unique',
-      });
+      return res
+        .status(400)
+        .json({ status: 'fail', message: 'Slug must be unique' });
     }
-
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -192,16 +184,14 @@ exports.updateArticle = async (req, res) => {
 
     const existingArticle = await NigArticle.findOne({ slug });
     if (!existingArticle) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Article not found',
-      });
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'Article not found' });
     }
 
     if (req.files?.articleThumbnail?.[0]) {
-      if (existingArticle.image_url) {
+      if (existingArticle.image_url)
         await deleteFromR2(existingArticle.image_url);
-      }
       updateData.image_url = await uploadToR2(
         req.files.articleThumbnail[0].buffer,
         req.files.articleThumbnail[0].mimetype,
@@ -229,8 +219,6 @@ exports.updateArticle = async (req, res) => {
         { $set: { isHeadline: false } }
       );
       await deleteCacheByPattern('headline:*');
-    } else if (!updateData.isHeadline && existingArticle.isHeadline) {
-      updateData.isHeadline = false;
     }
 
     if (updateData.isCategoryHeadline && !existingArticle.isCategoryHeadline) {
@@ -246,11 +234,6 @@ exports.updateArticle = async (req, res) => {
           deleteCacheByPattern(`category:headline:${cat}`)
         )
       );
-    } else if (
-      !updateData.isCategoryHeadline &&
-      existingArticle.isCategoryHeadline
-    ) {
-      updateData.isCategoryHeadline = false;
     }
 
     if (updateData.isBreaking && !existingArticle.isBreaking) {
@@ -285,21 +268,14 @@ exports.updateArticle = async (req, res) => {
       invalidateArticleCache(),
     ]);
 
-    res.status(200).json({
-      status: 'success',
-      data: { article },
-    });
+    res.status(200).json({ status: 'success', data: { article } });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Slug must be unique',
-      });
+      return res
+        .status(400)
+        .json({ status: 'fail', message: 'Slug must be unique' });
     }
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -307,26 +283,19 @@ exports.getHeadline = async (req, res) => {
   try {
     const cacheKey = 'headline:main';
     const cachedData = await getCache(cacheKey);
-
     if (cachedData) {
-      return res.status(200).json({
-        status: 'success',
-        cached: true,
-        data: cachedData,
-      });
+      return res
+        .status(200)
+        .json({ status: 'success', cached: true, data: cachedData });
     }
 
     const headlineArticle = await NigArticle.findOne({ isHeadline: true }).sort(
-      {
-        published_at: -1,
-      }
+      { published_at: -1 }
     );
-
     if (!headlineArticle) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No headline article found',
-      });
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'No headline article found' });
     }
 
     const similarArticles = await NigArticle.find({
@@ -336,23 +305,14 @@ exports.getHeadline = async (req, res) => {
       .sort({ published_at: -1 })
       .limit(3);
 
-    const responseData = {
-      headline: headlineArticle,
-      similarArticles,
-    };
+    const responseData = { headline: headlineArticle, similarArticles };
+    await setCache(cacheKey, responseData, 432000);
 
-    await setCache(cacheKey, responseData, 3600);
-
-    res.status(200).json({
-      status: 'success',
-      cached: false,
-      data: responseData,
-    });
+    res
+      .status(200)
+      .json({ status: 'success', cached: false, data: responseData });
   } catch (err) {
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -361,13 +321,10 @@ exports.getCategoryHeadline = async (req, res) => {
     const { category } = req.params;
     const cacheKey = `category:headline:${category}`;
     const cachedData = await getCache(cacheKey);
-
     if (cachedData) {
-      return res.status(200).json({
-        status: 'success',
-        cached: true,
-        data: cachedData,
-      });
+      return res
+        .status(200)
+        .json({ status: 'success', cached: true, data: cachedData });
     }
 
     const categoryHeadline = await NigArticle.findOne({
@@ -376,10 +333,9 @@ exports.getCategoryHeadline = async (req, res) => {
     }).sort({ published_at: -1 });
 
     if (!categoryHeadline) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No category headline found',
-      });
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'No category headline found' });
     }
 
     const similarArticles = await NigArticle.find({
@@ -390,23 +346,14 @@ exports.getCategoryHeadline = async (req, res) => {
       .sort({ published_at: -1 })
       .limit(3);
 
-    const responseData = {
-      categoryHeadline,
-      similarArticles,
-    };
+    const responseData = { categoryHeadline, similarArticles };
+    await setCache(cacheKey, responseData, 432000);
 
-    await setCache(cacheKey, responseData, 3600);
-
-    res.status(200).json({
-      status: 'success',
-      cached: false,
-      data: responseData,
-    });
+    res
+      .status(200)
+      .json({ status: 'success', cached: false, data: responseData });
   } catch (err) {
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -592,7 +539,7 @@ exports.getArticles = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',
@@ -742,7 +689,7 @@ exports.getArticlesByCategory = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',

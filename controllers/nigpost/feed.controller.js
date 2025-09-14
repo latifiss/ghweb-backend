@@ -108,7 +108,7 @@ exports.getFeed = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',
@@ -234,7 +234,7 @@ exports.getFeedByCategory = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',
@@ -356,7 +356,7 @@ exports.getFeedByTags = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',
