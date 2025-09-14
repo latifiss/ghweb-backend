@@ -9,7 +9,11 @@ const generateCacheKey = (prefix, params) => {
 const setCache = async (key, data, expiration = 432000) => {
   try {
     const client = await getRedisClient();
-    await client.setEx(key, expiration, JSON.stringify(data));
+    if (expiration === null) {
+      await client.set(key, JSON.stringify(data));
+    } else {
+      await client.setEx(key, expiration, JSON.stringify(data));
+    }
   } catch (err) {
     console.error('Redis set error:', err);
   }
@@ -73,27 +77,20 @@ exports.createArticle = async (req, res) => {
     let imageUrl = null;
     let contentImageUrl = null;
 
-    try {
-      if (req.files?.articleThumbnail?.[0]) {
-        imageUrl = await uploadToR2(
-          req.files.articleThumbnail[0].buffer,
-          req.files.articleThumbnail[0].mimetype,
-          'articles'
-        );
-      }
+    if (req.files?.articleThumbnail?.[0]) {
+      imageUrl = await uploadToR2(
+        req.files.articleThumbnail[0].buffer,
+        req.files.articleThumbnail[0].mimetype,
+        'articles'
+      );
+    }
 
-      if (req.files?.contentThumbnail?.[0]) {
-        contentImageUrl = await uploadToR2(
-          req.files.contentThumbnail[0].buffer,
-          req.files.contentThumbnail[0].mimetype,
-          'articles'
-        );
-      }
-    } catch (uploadError) {
-      return res.status(500).json({
-        status: 'error',
-        message: 'Failed to upload image(s)',
-      });
+    if (req.files?.contentThumbnail?.[0]) {
+      contentImageUrl = await uploadToR2(
+        req.files.contentThumbnail[0].buffer,
+        req.files.contentThumbnail[0].mimetype,
+        'articles'
+      );
     }
 
     if (isHeadline) {
@@ -106,15 +103,10 @@ exports.createArticle = async (req, res) => {
 
     if (isCategoryHeadline && category) {
       const categories = Array.isArray(category) ? category : [category];
-
       await Article.updateMany(
-        {
-          category: { $in: categories },
-          isCategoryHeadline: true,
-        },
+        { category: { $in: categories }, isCategoryHeadline: true },
         { $set: { isCategoryHeadline: false } }
       );
-
       await Promise.all(
         categories.map((cat) =>
           deleteCacheByPattern(`category:headline:${cat}`)
@@ -158,27 +150,23 @@ exports.createArticle = async (req, res) => {
       }),
     });
 
-    const validationError = article.validateSync();
-    if (validationError) {
-      const errors = {};
-      Object.keys(validationError.errors).forEach((key) => {
-        errors[key] = validationError.errors[key].message;
-      });
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Validation failed',
-        errors,
-      });
-    }
-
     await article.save();
-
     await invalidateArticleCache();
 
-    res.status(201).json({
-      status: 'success',
-      data: { article },
-    });
+    if (isHeadline) {
+      const responseData = { headline: article, similarArticles: [] };
+      await setCache('headline:main', responseData, null);
+    }
+
+    if (isCategoryHeadline) {
+      const categories = Array.isArray(category) ? category : [category];
+      for (const cat of categories) {
+        const responseData = { categoryHeadline: article, similarArticles: [] };
+        await setCache(`category:headline:${cat}`, responseData, null);
+      }
+    }
+
+    res.status(201).json({ status: 'success', data: { article } });
   } catch (err) {
     if (err.code === 11000) {
       return res.status(400).json({
@@ -186,11 +174,7 @@ exports.createArticle = async (req, res) => {
         message: 'Slug must be unique',
       });
     }
-
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -198,13 +182,12 @@ exports.updateArticle = async (req, res) => {
   try {
     const { slug } = req.params;
     const updateData = { ...req.body };
-
     const existingArticle = await Article.findOne({ slug });
+
     if (!existingArticle) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Article not found',
-      });
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'Article not found' });
     }
 
     if (req.files?.articleThumbnail?.[0]) {
@@ -227,14 +210,9 @@ exports.updateArticle = async (req, res) => {
         req.files.contentThumbnail[0].mimetype,
         'articles'
       );
-
       updateData.content = existingArticle.content.map((item, index) => {
-        if (index === 0) {
-          return {
-            ...item,
-            content_image_url: newContentImageUrl,
-          };
-        }
+        if (index === 0)
+          return { ...item, content_image_url: newContentImageUrl };
         return item;
       });
     }
@@ -250,25 +228,15 @@ exports.updateArticle = async (req, res) => {
       delete updateData.isHeadline;
     }
 
-    if (
-      updateData.isCategoryHeadline &&
-      !existingArticle.isCategoryHeadline &&
-      existingArticle.category
-    ) {
+    if (updateData.isCategoryHeadline && !existingArticle.isCategoryHeadline) {
       const categories = Array.isArray(existingArticle.category)
         ? existingArticle.category
         : [existingArticle.category];
-
       await Article.updateMany(
-        {
-          category: { $in: categories },
-          isCategoryHeadline: true,
-        },
+        { category: { $in: categories }, isCategoryHeadline: true },
         { $set: { isCategoryHeadline: false } }
       );
-
       updateData.isCategoryHeadline = true;
-
       await Promise.all(
         categories.map((cat) =>
           deleteCacheByPattern(`category:headline:${cat}`)
@@ -278,60 +246,28 @@ exports.updateArticle = async (req, res) => {
       delete updateData.isCategoryHeadline;
     }
 
-    if (updateData.isBreaking && !existingArticle.isBreaking) {
-      updateData.breakingExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
-    } else if (updateData.isBreaking === false) {
-      updateData.breakingExpiresAt = null;
-    }
-
-    if (updateData.wasLive) {
-      updateData.isLive = false;
-    }
-
-    if (updateData.title) {
-      updateData.meta_title = Article.prototype.generateMetaTitle(
-        updateData.title
-      );
-    }
-
-    if (updateData.description) {
-      updateData.meta_description = Article.prototype.generateMetaDescription({
-        title: updateData.title || existingArticle.title,
-        description: updateData.description,
-      });
-    }
-
-    if (updateData.published_at) {
-      updateData.published_at = new Date(updateData.published_at);
-    }
-
     const article = await Article.findOneAndUpdate({ slug }, updateData, {
       new: true,
       runValidators: true,
     });
 
-    await Promise.all([
-      deleteCacheByPattern(`article:${article.slug}`),
-      deleteCacheByPattern(`article:${article._id}`),
-      deleteCacheByPattern('articles:list:*'),
-      invalidateArticleCache(),
-    ]);
+    await invalidateArticleCache();
 
-    res.status(200).json({
-      status: 'success',
-      data: { article },
-    });
-  } catch (err) {
-    if (err.code === 11000) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Slug must be unique',
-      });
+    if (article.isHeadline) {
+      const responseData = { headline: article, similarArticles: [] };
+      await setCache('headline:main', responseData, null);
     }
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+
+    if (article.isCategoryHeadline) {
+      for (const cat of article.category) {
+        const responseData = { categoryHeadline: article, similarArticles: [] };
+        await setCache(`category:headline:${cat}`, responseData, null);
+      }
+    }
+
+    res.status(200).json({ status: 'success', data: { article } });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -339,51 +275,32 @@ exports.getHeadline = async (req, res) => {
   try {
     const cacheKey = 'headline:main';
     const cachedData = await getCache(cacheKey);
-
     if (cachedData) {
-      return res.status(200).json({
-        status: 'success',
-        cached: true,
-        data: cachedData,
-      });
+      return res
+        .status(200)
+        .json({ status: 'success', cached: true, data: cachedData });
     }
-
     const headlineArticle = await Article.findOne({ isHeadline: true }).sort({
       published_at: -1,
     });
-
     if (!headlineArticle) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No headline article found',
-      });
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'No headline article found' });
     }
-
     const similarArticles = await Article.find({
       tags: { $in: headlineArticle.tags || [] },
       isHeadline: false,
     })
       .sort({ published_at: -1 })
       .limit(3);
-
-    const responseData = {
-      headline: headlineArticle,
-      similarArticles,
-    };
-
-    // Cache for 1 hour
-    await setCache(cacheKey, responseData, 3600);
-
-    res.status(200).json({
-      status: 'success',
-      cached: false,
-      data: responseData,
-    });
+    const responseData = { headline: headlineArticle, similarArticles };
+    await setCache(cacheKey, responseData, null);
+    res
+      .status(200)
+      .json({ status: 'success', cached: false, data: responseData });
   } catch (err) {
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -392,27 +309,20 @@ exports.getCategoryHeadline = async (req, res) => {
     const { category } = req.params;
     const cacheKey = `category:headline:${category}`;
     const cachedData = await getCache(cacheKey);
-
     if (cachedData) {
-      return res.status(200).json({
-        status: 'success',
-        cached: true,
-        data: cachedData,
-      });
+      return res
+        .status(200)
+        .json({ status: 'success', cached: true, data: cachedData });
     }
-
     const categoryHeadline = await Article.findOne({
       category: { $in: [category] },
       isCategoryHeadline: true,
     }).sort({ published_at: -1 });
-
     if (!categoryHeadline) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No category headline found',
-      });
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'No category headline found' });
     }
-
     const similarArticles = await Article.find({
       category: { $in: [category] },
       isCategoryHeadline: false,
@@ -420,25 +330,13 @@ exports.getCategoryHeadline = async (req, res) => {
     })
       .sort({ published_at: -1 })
       .limit(3);
-
-    const responseData = {
-      categoryHeadline,
-      similarArticles,
-    };
-
-    // Cache for 1 hour
-    await setCache(cacheKey, responseData, 3600);
-
-    res.status(200).json({
-      status: 'success',
-      cached: false,
-      data: responseData,
-    });
+    const responseData = { categoryHeadline, similarArticles };
+    await setCache(cacheKey, responseData, null);
+    res
+      .status(200)
+      .json({ status: 'success', cached: false, data: responseData });
   } catch (err) {
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -626,7 +524,7 @@ exports.getArticles = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',
@@ -778,7 +676,7 @@ exports.getArticlesByCategory = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',

@@ -10,9 +10,7 @@ const setCache = async (key, data, expiration = 432000) => {
   try {
     const client = await getRedisClient();
     await client.setEx(key, expiration, JSON.stringify(data));
-  } catch (err) {
-    console.error('Redis set error:', err);
-  }
+  } catch (err) {}
 };
 
 const getCache = async (key) => {
@@ -21,7 +19,6 @@ const getCache = async (key) => {
     const cachedData = await client.get(key);
     return cachedData ? JSON.parse(cachedData) : null;
   } catch (err) {
-    console.error('Redis get error:', err);
     return null;
   }
 };
@@ -33,9 +30,7 @@ const deleteCacheByPattern = async (pattern) => {
     if (keys.length > 0) {
       await client.del(keys);
     }
-  } catch (err) {
-    console.error('Redis delete error:', err);
-  }
+  } catch (err) {}
 };
 
 const invalidateArticleCache = async () => {
@@ -89,7 +84,7 @@ exports.createArticle = async (req, res) => {
           'articles'
         );
       }
-    } catch (uploadError) {
+    } catch {
       return res.status(500).json({
         status: 'error',
         message: 'Failed to upload image(s)',
@@ -105,14 +100,11 @@ exports.createArticle = async (req, res) => {
     }
 
     if (isCategoryHeadline && category) {
+      const cats = Array.isArray(category) ? category : [category];
       await ZaspArticle.updateMany(
-        {
-          category: { $in: Array.isArray(category) ? category : [category] },
-          isCategoryHeadline: true,
-        },
+        { category: { $in: cats }, isCategoryHeadline: true },
         { $set: { isCategoryHeadline: false } }
       );
-      const cats = Array.isArray(category) ? category : [category];
       for (const cat of cats) {
         await deleteCacheByPattern(`category:headline:${cat}`);
       }
@@ -178,7 +170,6 @@ exports.createArticle = async (req, res) => {
         message: 'Slug must be unique',
       });
     }
-
     res.status(500).json({
       status: 'error',
       message: err.message,
@@ -221,12 +212,14 @@ exports.updateArticle = async (req, res) => {
       );
     }
 
-    if (updateData.isHeadline) {
+    if (updateData.isHeadline && !existingArticle.isHeadline) {
       await ZaspArticle.updateMany(
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
       await deleteCacheByPattern('headline:*');
+    } else if (existingArticle.isHeadline && !updateData.isHeadline) {
+      delete updateData.isHeadline;
     }
 
     if (updateData.isCategoryHeadline && existingArticle.category) {
@@ -240,6 +233,8 @@ exports.updateArticle = async (req, res) => {
       for (const cat of existingArticle.category) {
         await deleteCacheByPattern(`category:headline:${cat}`);
       }
+    } else if (existingArticle.isCategoryHeadline) {
+      delete updateData.isCategoryHeadline;
     }
 
     if (updateData.isBreaking && !existingArticle.isBreaking) {
@@ -293,7 +288,6 @@ exports.updateArticle = async (req, res) => {
         message: 'Slug must be unique',
       });
     }
-
     res.status(500).json({
       status: 'error',
       message: err.message,
@@ -303,28 +297,13 @@ exports.updateArticle = async (req, res) => {
 
 exports.getHeadline = async (req, res) => {
   try {
-    const cacheKey = 'headline:main';
-    const cachedData = await getCache(cacheKey);
-
-    if (cachedData) {
-      return res.status(200).json({
-        status: 'success',
-        cached: true,
-        data: cachedData,
-      });
-    }
-
     const headlineArticle = await ZaspArticle.findOne({
       isHeadline: true,
-    }).sort({
-      published_at: -1,
-    });
-
+    }).sort({ published_at: -1 });
     if (!headlineArticle) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No headline article found',
-      });
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'No headline article found' });
     }
 
     const similarArticles = await ZaspArticle.find({
@@ -334,50 +313,29 @@ exports.getHeadline = async (req, res) => {
       .sort({ published_at: -1 })
       .limit(3);
 
-    const responseData = {
-      headline: headlineArticle,
-      similarArticles,
-    };
+    const responseData = { headline: headlineArticle, similarArticles };
+    await setCache('headline:main', responseData, 432000);
 
-    await setCache(cacheKey, responseData, 3600);
-
-    res.status(200).json({
-      status: 'success',
-      cached: false,
-      data: responseData,
-    });
+    res
+      .status(200)
+      .json({ status: 'success', cached: false, data: responseData });
   } catch (err) {
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
 exports.getCategoryHeadline = async (req, res) => {
   try {
     const { category } = req.params;
-    const cacheKey = `category:headline:${category}`;
-    const cachedData = await getCache(cacheKey);
-
-    if (cachedData) {
-      return res.status(200).json({
-        status: 'success',
-        cached: true,
-        data: cachedData,
-      });
-    }
-
     const categoryHeadline = await ZaspArticle.findOne({
       category: { $in: [category] },
       isCategoryHeadline: true,
     }).sort({ published_at: -1 });
 
     if (!categoryHeadline) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No category headline found',
-      });
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'No category headline found' });
     }
 
     const similarArticles = await ZaspArticle.find({
@@ -388,23 +346,14 @@ exports.getCategoryHeadline = async (req, res) => {
       .sort({ published_at: -1 })
       .limit(3);
 
-    const responseData = {
-      categoryHeadline,
-      similarArticles,
-    };
+    const responseData = { categoryHeadline, similarArticles };
+    await setCache(`category:headline:${category}`, responseData, 432000);
 
-    await setCache(cacheKey, responseData, 3600);
-
-    res.status(200).json({
-      status: 'success',
-      cached: false,
-      data: responseData,
-    });
+    res
+      .status(200)
+      .json({ status: 'success', cached: false, data: responseData });
   } catch (err) {
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -590,7 +539,7 @@ exports.getArticles = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',
@@ -740,7 +689,7 @@ exports.getArticlesByCategory = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',

@@ -2,9 +2,8 @@ const { SpfArticle } = require('../../models/spf/article.model');
 const { uploadToR2, deleteFromR2 } = require('../../utils/r2');
 const { getRedisClient } = require('../../lib/redis');
 
-const generateCacheKey = (prefix, params) => {
-  return `${prefix}:${Object.values(params).join(':')}`;
-};
+const generateCacheKey = (prefix, params) =>
+  `${prefix}:${Object.values(params).join(':')}`;
 
 const setCache = async (key, data, expiration = 432000) => {
   try {
@@ -81,7 +80,6 @@ exports.createArticle = async (req, res) => {
           'articles'
         );
       }
-
       if (req.files?.contentThumbnail?.[0]) {
         contentImageUrl = await uploadToR2(
           req.files.contentThumbnail[0].buffer,
@@ -90,10 +88,9 @@ exports.createArticle = async (req, res) => {
         );
       }
     } catch (uploadError) {
-      return res.status(500).json({
-        status: 'error',
-        message: 'Failed to upload image(s)',
-      });
+      return res
+        .status(500)
+        .json({ status: 'error', message: 'Failed to upload image(s)' });
     }
 
     if (isHeadline) {
@@ -106,15 +103,10 @@ exports.createArticle = async (req, res) => {
 
     if (isCategoryHeadline && category) {
       const categories = Array.isArray(category) ? category : [category];
-
       await SpfArticle.updateMany(
-        {
-          category: { $in: categories },
-          isCategoryHeadline: true,
-        },
+        { category: { $in: categories }, isCategoryHeadline: true },
         { $set: { isCategoryHeadline: false } }
       );
-
       await Promise.all(
         categories.map((cat) =>
           deleteCacheByPattern(`category:headline:${cat}`)
@@ -164,33 +156,37 @@ exports.createArticle = async (req, res) => {
       Object.keys(validationError.errors).forEach((key) => {
         errors[key] = validationError.errors[key].message;
       });
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Validation failed',
-        errors,
-      });
+      return res
+        .status(400)
+        .json({ status: 'fail', message: 'Validation failed', errors });
     }
 
     await article.save();
-
     await invalidateArticleCache();
-
-    res.status(201).json({
-      status: 'success',
-      data: { article },
-    });
-  } catch (err) {
-    if (err.code === 11000) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Slug must be unique',
-      });
+    if (isHeadline)
+      await setCache('headline:main', { headline: article }, 432000);
+    if (isCategoryHeadline) {
+      const categories = Array.isArray(article.category)
+        ? article.category
+        : [article.category];
+      await Promise.all(
+        categories.map((cat) =>
+          setCache(
+            `category:headline:${cat}`,
+            { categoryHeadline: article },
+            432000
+          )
+        )
+      );
     }
 
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(201).json({ status: 'success', data: { article } });
+  } catch (err) {
+    if (err.code === 11000)
+      return res
+        .status(400)
+        .json({ status: 'fail', message: 'Slug must be unique' });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -200,17 +196,14 @@ exports.updateArticle = async (req, res) => {
     const updateData = { ...req.body };
 
     const existingArticle = await SpfArticle.findOne({ slug });
-    if (!existingArticle) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Article not found',
-      });
-    }
+    if (!existingArticle)
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'Article not found' });
 
     if (req.files?.articleThumbnail?.[0]) {
-      if (existingArticle.image_url) {
+      if (existingArticle.image_url)
         await deleteFromR2(existingArticle.image_url);
-      }
       updateData.image_url = await uploadToR2(
         req.files.articleThumbnail[0].buffer,
         req.files.articleThumbnail[0].mimetype,
@@ -219,24 +212,16 @@ exports.updateArticle = async (req, res) => {
     }
 
     if (req.files?.contentThumbnail?.[0]) {
-      if (existingArticle.content?.[0]?.content_image_url) {
+      if (existingArticle.content?.[0]?.content_image_url)
         await deleteFromR2(existingArticle.content[0].content_image_url);
-      }
       const newContentImageUrl = await uploadToR2(
         req.files.contentThumbnail[0].buffer,
         req.files.contentThumbnail[0].mimetype,
         'articles'
       );
-
-      updateData.content = existingArticle.content.map((item, index) => {
-        if (index === 0) {
-          return {
-            ...item,
-            content_image_url: newContentImageUrl,
-          };
-        }
-        return item;
-      });
+      updateData.content = existingArticle.content.map((item, index) =>
+        index === 0 ? { ...item, content_image_url: newContentImageUrl } : item
+      );
     }
 
     if (updateData.isHeadline && !existingArticle.isHeadline) {
@@ -244,9 +229,8 @@ exports.updateArticle = async (req, res) => {
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
-      updateData.isHeadline = true;
       await deleteCacheByPattern('headline:*');
-    } else if (existingArticle.isHeadline && !updateData.isHeadline) {
+    } else if (existingArticle.isHeadline && updateData.isHeadline === false) {
       delete updateData.isHeadline;
     }
 
@@ -258,23 +242,19 @@ exports.updateArticle = async (req, res) => {
       const categories = Array.isArray(existingArticle.category)
         ? existingArticle.category
         : [existingArticle.category];
-
       await SpfArticle.updateMany(
-        {
-          category: { $in: categories },
-          isCategoryHeadline: true,
-        },
+        { category: { $in: categories }, isCategoryHeadline: true },
         { $set: { isCategoryHeadline: false } }
       );
-
-      updateData.isCategoryHeadline = true;
-
       await Promise.all(
         categories.map((cat) =>
           deleteCacheByPattern(`category:headline:${cat}`)
         )
       );
-    } else if (existingArticle.isCategoryHeadline) {
+    } else if (
+      existingArticle.isCategoryHeadline &&
+      updateData.isCategoryHeadline === false
+    ) {
       delete updateData.isCategoryHeadline;
     }
 
@@ -284,27 +264,19 @@ exports.updateArticle = async (req, res) => {
       updateData.breakingExpiresAt = null;
     }
 
-    if (updateData.wasLive) {
-      updateData.isLive = false;
-    }
-
-    if (updateData.title) {
+    if (updateData.wasLive) updateData.isLive = false;
+    if (updateData.title)
       updateData.meta_title = SpfArticle.prototype.generateMetaTitle(
         updateData.title
       );
-    }
-
-    if (updateData.description) {
+    if (updateData.description)
       updateData.meta_description =
         SpfArticle.prototype.generateMetaDescription({
           title: updateData.title || existingArticle.title,
           description: updateData.description,
         });
-    }
-
-    if (updateData.published_at) {
+    if (updateData.published_at)
       updateData.published_at = new Date(updateData.published_at);
-    }
 
     const article = await SpfArticle.findOneAndUpdate({ slug }, updateData, {
       new: true,
@@ -317,22 +289,30 @@ exports.updateArticle = async (req, res) => {
       deleteCacheByPattern('articles:list:*'),
       invalidateArticleCache(),
     ]);
-
-    res.status(200).json({
-      status: 'success',
-      data: { article },
-    });
-  } catch (err) {
-    if (err.code === 11000) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Slug must be unique',
-      });
+    if (article.isHeadline)
+      await setCache('headline:main', { headline: article }, 432000);
+    if (article.isCategoryHeadline) {
+      const categories = Array.isArray(article.category)
+        ? article.category
+        : [article.category];
+      await Promise.all(
+        categories.map((cat) =>
+          setCache(
+            `category:headline:${cat}`,
+            { categoryHeadline: article },
+            432000
+          )
+        )
+      );
     }
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+
+    res.status(200).json({ status: 'success', data: { article } });
+  } catch (err) {
+    if (err.code === 11000)
+      return res
+        .status(400)
+        .json({ status: 'fail', message: 'Slug must be unique' });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -340,27 +320,18 @@ exports.getHeadline = async (req, res) => {
   try {
     const cacheKey = 'headline:main';
     const cachedData = await getCache(cacheKey);
-
-    if (cachedData) {
-      return res.status(200).json({
-        status: 'success',
-        cached: true,
-        data: cachedData,
-      });
-    }
+    if (cachedData)
+      return res
+        .status(200)
+        .json({ status: 'success', cached: true, data: cachedData });
 
     const headlineArticle = await SpfArticle.findOne({ isHeadline: true }).sort(
-      {
-        published_at: -1,
-      }
+      { published_at: -1 }
     );
-
-    if (!headlineArticle) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No headline article found',
-      });
-    }
+    if (!headlineArticle)
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'No headline article found' });
 
     const similarArticles = await SpfArticle.find({
       tags: { $in: headlineArticle.tags || [] },
@@ -368,24 +339,14 @@ exports.getHeadline = async (req, res) => {
     })
       .sort({ published_at: -1 })
       .limit(3);
+    const responseData = { headline: headlineArticle, similarArticles };
 
-    const responseData = {
-      headline: headlineArticle,
-      similarArticles,
-    };
-
-    await setCache(cacheKey, responseData, 3600);
-
-    res.status(200).json({
-      status: 'success',
-      cached: false,
-      data: responseData,
-    });
+    await setCache(cacheKey, responseData, 432000);
+    res
+      .status(200)
+      .json({ status: 'success', cached: false, data: responseData });
   } catch (err) {
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -394,26 +355,19 @@ exports.getCategoryHeadline = async (req, res) => {
     const { category } = req.params;
     const cacheKey = `category:headline:${category}`;
     const cachedData = await getCache(cacheKey);
-
-    if (cachedData) {
-      return res.status(200).json({
-        status: 'success',
-        cached: true,
-        data: cachedData,
-      });
-    }
+    if (cachedData)
+      return res
+        .status(200)
+        .json({ status: 'success', cached: true, data: cachedData });
 
     const categoryHeadline = await SpfArticle.findOne({
       category: { $in: [category] },
       isCategoryHeadline: true,
     }).sort({ published_at: -1 });
-
-    if (!categoryHeadline) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'No category headline found',
-      });
-    }
+    if (!categoryHeadline)
+      return res
+        .status(404)
+        .json({ status: 'fail', message: 'No category headline found' });
 
     const similarArticles = await SpfArticle.find({
       category: { $in: [category] },
@@ -422,24 +376,14 @@ exports.getCategoryHeadline = async (req, res) => {
     })
       .sort({ published_at: -1 })
       .limit(3);
+    const responseData = { categoryHeadline, similarArticles };
 
-    const responseData = {
-      categoryHeadline,
-      similarArticles,
-    };
-
-    await setCache(cacheKey, responseData, 3600);
-
-    res.status(200).json({
-      status: 'success',
-      cached: false,
-      data: responseData,
-    });
+    await setCache(cacheKey, responseData, 432000);
+    res
+      .status(200)
+      .json({ status: 'success', cached: false, data: responseData });
   } catch (err) {
-    res.status(500).json({
-      status: 'error',
-      message: err.message,
-    });
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 
@@ -625,7 +569,7 @@ exports.getArticles = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',
@@ -775,7 +719,7 @@ exports.getArticlesByCategory = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 300);
+    await setCache(cacheKey, responseData, 432000);
 
     res.status(200).json({
       status: 'success',
