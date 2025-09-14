@@ -57,7 +57,9 @@ exports.getFeed = async (req, res) => {
     const minLatestInTop = 2;
     const now = new Date();
 
-    const allArticles = await NigArticle.find().sort({ published_at: -1 });
+    const allArticles = await NigArticle.find({
+      isHeadline: { $ne: true },
+    }).sort({ published_at: -1 });
 
     const processedArticles = allArticles.map((article) => {
       const age = now - new Date(article.published_at);
@@ -100,7 +102,7 @@ exports.getFeed = async (req, res) => {
       meta: {
         total: allArticles.length,
         freshCount: processedArticles.filter((a) => a.isFresh).length,
-        latestIn极: latestArticles.filter((article) =>
+        latestInTop: latestArticles.filter((article) =>
           finalTopSix.some((a) => a._id.equals(article._id))
         ).length,
       },
@@ -132,7 +134,7 @@ exports.getFeedByCategory = async (req, res) => {
       return res.status(200).json({
         status: 'success',
         cached: true,
-        data: cached极,
+        data: cachedData,
       });
     }
 
@@ -144,6 +146,7 @@ exports.getFeedByCategory = async (req, res) => {
     const categoryRegex = new RegExp(`^${category}$`, 'i');
     const allArticles = await NigArticle.find({
       category: { $elemMatch: { $regex: categoryRegex } },
+      isHeadline: { $ne: true },
     }).sort({
       published_at: -1,
     });
@@ -201,7 +204,7 @@ exports.getFeedByCategory = async (req, res) => {
       .slice(0, limit - MIXED_SECTION_SIZE);
 
     const finalResults = [
-      ...first极,
+      ...firstSix,
       ...mixedSection,
       ...remainingLatest,
     ].slice(0, limit);
