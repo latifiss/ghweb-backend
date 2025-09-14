@@ -74,7 +74,7 @@ exports.createArticle = async (req, res) => {
     let contentImageUrl = null;
 
     try {
-      if (req.files?.articleThumbnail) {
+      if (req.files?.articleThumbnail?.[0]) {
         imageUrl = await uploadToR2(
           req.files.articleThumbnail[0].buffer,
           req.files.articleThumbnail[0].mimetype,
@@ -82,7 +82,7 @@ exports.createArticle = async (req, res) => {
         );
       }
 
-      if (req.files?.contentThumbnail) {
+      if (req.files?.contentThumbnail?.[0]) {
         contentImageUrl = await uploadToR2(
           req.files.contentThumbnail[0].buffer,
           req.files.contentThumbnail[0].mimetype,
@@ -101,23 +101,25 @@ exports.createArticle = async (req, res) => {
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
-      // Invalidate headline cache
       await deleteCacheByPattern('headline:*');
     }
 
     if (isCategoryHeadline && category) {
+      const categories = Array.isArray(category) ? category : [category];
+
       await Article.updateMany(
-        { category: { $in: category }, isCategoryHeadline: true },
+        {
+          category: { $in: categories },
+          isCategoryHeadline: true,
+        },
         { $set: { isCategoryHeadline: false } }
       );
-      // Invalidate category headline cache
-      if (Array.isArray(category)) {
-        for (const cat of category) {
-          await deleteCacheByPattern(`category:headline:${cat}`);
-        }
-      } else {
-        await deleteCacheByPattern(`category:headline:${category}`);
-      }
+
+      await Promise.all(
+        categories.map((cat) =>
+          deleteCacheByPattern(`category:headline:${cat}`)
+        )
+      );
     }
 
     let articleContent;
@@ -171,14 +173,11 @@ exports.createArticle = async (req, res) => {
 
     await article.save();
 
-    // Invalidate cache after creating new article
     await invalidateArticleCache();
 
     res.status(201).json({
       status: 'success',
-      data: {
-        article,
-      },
+      data: { article },
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -198,9 +197,9 @@ exports.createArticle = async (req, res) => {
 exports.updateArticle = async (req, res) => {
   try {
     const { slug } = req.params;
-    const updateData = req.body;
+    const updateData = { ...req.body };
 
-    const existingArticle = await Article.findOne({ slug: slug });
+    const existingArticle = await Article.findOne({ slug });
     if (!existingArticle) {
       return res.status(404).json({
         status: 'fail',
@@ -208,7 +207,7 @@ exports.updateArticle = async (req, res) => {
       });
     }
 
-    if (req.files?.articleThumbnail) {
+    if (req.files?.articleThumbnail?.[0]) {
       if (existingArticle.image_url) {
         await deleteFromR2(existingArticle.image_url);
       }
@@ -219,54 +218,64 @@ exports.updateArticle = async (req, res) => {
       );
     }
 
-    if (req.files?.contentThumbnail) {
+    if (req.files?.contentThumbnail?.[0]) {
       if (existingArticle.content?.[0]?.content_image_url) {
         await deleteFromR2(existingArticle.content[0].content_image_url);
       }
+      const newContentImageUrl = await uploadToR2(
+        req.files.contentThumbnail[0].buffer,
+        req.files.contentThumbnail[0].mimetype,
+        'articles'
+      );
+
       updateData.content = existingArticle.content.map((item, index) => {
         if (index === 0) {
           return {
             ...item,
-            content_image_url: req.files.contentThumbnail[0].buffer
-              ? uploadToR2(
-                  req.files.contentThumbnail[0].buffer,
-                  req.files.contentThumbnail[0].mimetype,
-                  'articles'
-                )
-                  .then((url) => url)
-                  .catch((err) => console.error(err))
-              : item.content_image_url,
+            content_image_url: newContentImageUrl,
           };
         }
         return item;
       });
     }
 
-    if (updateData.isHeadline) {
+    if (updateData.isHeadline && !existingArticle.isHeadline) {
       await Article.updateMany(
         { isHeadline: true },
         { $set: { isHeadline: false } }
       );
+      updateData.isHeadline = true;
       await deleteCacheByPattern('headline:*');
+    } else if (existingArticle.isHeadline && !updateData.isHeadline) {
+      delete updateData.isHeadline;
     }
 
-    if (updateData.isCategoryHeadline && existingArticle.category) {
+    if (
+      updateData.isCategoryHeadline &&
+      !existingArticle.isCategoryHeadline &&
+      existingArticle.category
+    ) {
+      const categories = Array.isArray(existingArticle.category)
+        ? existingArticle.category
+        : [existingArticle.category];
+
       await Article.updateMany(
         {
-          category: { $in: existingArticle.category },
+          category: { $in: categories },
           isCategoryHeadline: true,
         },
         { $set: { isCategoryHeadline: false } }
       );
-      if (Array.isArray(existingArticle.category)) {
-        for (const cat of existingArticle.category) {
-          await deleteCacheByPattern(`category:headline:${cat}`);
-        }
-      } else {
-        await deleteCacheByPattern(
-          `category:headline:${existingArticle.category}`
-        );
-      }
+
+      updateData.isCategoryHeadline = true;
+
+      await Promise.all(
+        categories.map((cat) =>
+          deleteCacheByPattern(`category:headline:${cat}`)
+        )
+      );
+    } else if (existingArticle.isCategoryHeadline) {
+      delete updateData.isCategoryHeadline;
     }
 
     if (updateData.isBreaking && !existingArticle.isBreaking) {
@@ -296,7 +305,7 @@ exports.updateArticle = async (req, res) => {
       updateData.published_at = new Date(updateData.published_at);
     }
 
-    const article = await Article.findOneAndUpdate({ slug: slug }, updateData, {
+    const article = await Article.findOneAndUpdate({ slug }, updateData, {
       new: true,
       runValidators: true,
     });
@@ -310,9 +319,7 @@ exports.updateArticle = async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      data: {
-        article,
-      },
+      data: { article },
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -531,7 +538,6 @@ exports.markAsKeyEvent = async (req, res) => {
     article.content[updateIndex].isKey = true;
     await article.save();
 
-    // Invalidate cache for this article
     await Promise.all([
       deleteCacheByPattern(`article:${article.slug}`),
       deleteCacheByPattern(`article:${article._id}`),
@@ -620,7 +626,6 @@ exports.getArticles = async (req, res) => {
       },
     };
 
-    // Cache for 5 minutes (shorter TTL for listing pages)
     await setCache(cacheKey, responseData, 300);
 
     res.status(200).json({
@@ -773,7 +778,6 @@ exports.getArticlesByCategory = async (req, res) => {
       },
     };
 
-    // Cache for 5 minutes
     await setCache(cacheKey, responseData, 300);
 
     res.status(200).json({
@@ -815,7 +819,6 @@ exports.deleteArticle = async (req, res) => {
 
     await article.deleteOne();
 
-    // Invalidate all article-related cache
     await invalidateArticleCache();
 
     res.status(200).json({
