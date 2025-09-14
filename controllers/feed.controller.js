@@ -57,7 +57,9 @@ exports.getFeed = async (req, res) => {
     const minLatestInTop = 2;
     const now = new Date();
 
-    const allArticles = await Article.find().sort({ published_at: -1 });
+    const allArticles = await Article.find({ isHeadline: { $ne: true } }).sort({
+      published_at: -1,
+    });
 
     const processedArticles = allArticles.map((article) => {
       const age = now - new Date(article.published_at);
@@ -144,6 +146,7 @@ exports.getFeedByCategory = async (req, res) => {
     const categoryRegex = new RegExp(`^${category}$`, 'i');
     const allArticles = await Article.find({
       category: { $elemMatch: { $regex: categoryRegex } },
+      isCategoryHeadline: { $ne: true },
     }).sort({
       published_at: -1,
     });
