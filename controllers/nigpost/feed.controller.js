@@ -21,7 +21,7 @@ const getCache = async (key) => {
   try {
     const client = await getRedisClient();
     const cachedData = await client.get(key);
-    return cachedData ? 极JSON.parse(cachedData) : null;
+    return cachedData ? JSON.parse(cachedData) : null;
   } catch (err) {
     console.error('Redis get error:', err);
     return null;
@@ -125,7 +125,8 @@ exports.getFeed = async (req, res) => {
 
 exports.getFeedByCategory = async (req, res) => {
   try {
-    const { category } = req.params;
+    let { category } = req.params;
+    category = category.trim();
     const limit = parseInt(req.query.limit) || 30;
     const cacheKey = generateCacheKey('feed:category', { category, limit });
     const cachedData = await getCache(cacheKey);
@@ -141,15 +142,12 @@ exports.getFeedByCategory = async (req, res) => {
     const now = new Date();
     const TOP_SECTION_SIZE = 6;
     const MIXED_SECTION_SIZE = 24;
-    const FRESHNESS_THRESHOLD = 36 * 60 * 60 * 1000;
 
     const categoryRegex = new RegExp(`^${category}$`, 'i');
     const allArticles = await NigArticle.find({
       category: { $elemMatch: { $regex: categoryRegex } },
       isHeadline: { $ne: true },
-    }).sort({
-      published_at: -1,
-    });
+    }).sort({ published_at: -1 });
 
     const processedArticles = allArticles.map((article) => {
       const age = now - new Date(article.published_at);
@@ -251,7 +249,8 @@ exports.getFeedByCategory = async (req, res) => {
 
 exports.getFeedByTags = async (req, res) => {
   try {
-    const { tag } = req.params;
+    let { tag } = req.params;
+    tag = tag.trim();
     const limit = parseInt(req.query.limit) || 30;
     const cacheKey = generateCacheKey('feed:tag', { tag, limit });
     const cachedData = await getCache(cacheKey);
@@ -267,7 +266,6 @@ exports.getFeedByTags = async (req, res) => {
     const now = new Date();
     const TOP_SECTION_SIZE = 6;
     const MIXED_SECTION_SIZE = 24;
-    const FRESHNESS_THRESHOLD = 36 * 60 * 60 * 1000;
 
     const allArticles = await NigArticle.find({
       tags: { $regex: new RegExp(tag, 'i') },
