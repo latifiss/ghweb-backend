@@ -21,7 +21,7 @@ const getCache = async (key) => {
   try {
     const client = await getRedisClient();
     const cachedData = await client.get(key);
-    return cachedData ? JSON.parse(cachedData) : null;
+    return cachedData ? 极JSON.parse(cachedData) : null;
   } catch (err) {
     console.error('Redis get error:', err);
     return null;
@@ -137,8 +137,9 @@ exports.getFeedByCategory = async (req, res) => {
     const now = new Date();
     const TOP_SECTION_SIZE = 6;
     const MIXED_SECTION_SIZE = 24;
-    const categoryRegex = new RegExp(`^${category}$`, 'i');
+    const FRESHNESS_THRESHOLD = 36 * 60 * 60 * 1000;
 
+    const categoryRegex = new RegExp(`^${category}$`, 'i');
     const allArticles = await SpfArticle.find({
       category: { $elemMatch: { $regex: categoryRegex } },
       isCategoryHeadline: { $ne: true },
@@ -165,7 +166,6 @@ exports.getFeedByCategory = async (req, res) => {
     const firstSixRanked = rankedArticles
       .filter((a) => !firstSixLatest.some((l) => l._id.equals(a._id)))
       .slice(0, 3);
-
     const firstSix = [...firstSixLatest, ...firstSixRanked]
       .sort((a, b) => new Date(b.published_at) - new Date(a.published_at))
       .slice(0, TOP_SECTION_SIZE);
@@ -257,6 +257,7 @@ exports.getFeedByTags = async (req, res) => {
     const now = new Date();
     const TOP_SECTION_SIZE = 6;
     const MIXED_SECTION_SIZE = 24;
+    const FRESHNESS_THRESHOLD = 36 * 60 * 60 * 1000;
 
     const allArticles = await SpfArticle.find({
       tags: { $regex: new RegExp(tag, 'i') },
@@ -265,7 +266,11 @@ exports.getFeedByTags = async (req, res) => {
     const processedArticles = allArticles.map((article) => {
       const age = now - new Date(article.published_at);
       let score = rankArticle(article, { source_credibility: 0.8 });
-      if (age > FRESHNESS_THRESHOLD) score *= 0.3;
+
+      if (age > FRESHNESS_THRESHOLD) {
+        score *= 0.3;
+      }
+
       return {
         ...article.toObject(),
         score,
@@ -283,7 +288,6 @@ exports.getFeedByTags = async (req, res) => {
     const firstSixRanked = rankedArticles
       .filter((a) => !firstSixLatest.some((l) => l._id.equals(a._id)))
       .slice(0, 3);
-
     const firstSix = [...firstSixLatest, ...firstSixRanked]
       .sort((a, b) => new Date(b.published_at) - new Date(a.published_at))
       .slice(0, TOP_SECTION_SIZE);
