@@ -1,6 +1,7 @@
 const { Article } = require('../models/article.model');
 const { uploadToR2, deleteFromR2 } = require('../utils/r2');
 const { getRedisClient } = require('../lib/redis');
+const rankArticle = require('../utils/rankArticle');
 
 const generateCacheKey = (prefix, params) => {
   return `${prefix}:${Object.values(params).join(':')}`;
@@ -688,6 +689,140 @@ exports.getArticlesByCategory = async (req, res) => {
       status: 'error',
       message: err.message,
     });
+  }
+};
+
+exports.getArticleByCategory = async (req, res) => {
+  try {
+    const { category } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const cacheKey = generateCacheKey('articles:category', {
+      category,
+      page,
+      limit,
+    });
+    const cachedData = await getCache(cacheKey);
+
+    if (cachedData) {
+      return res.status(200).json({
+        status: 'success',
+        cached: true,
+        ...cachedData,
+      });
+    }
+
+    const [articles, total] = await Promise.all([
+      Article.find({ category, isHeadline: { $ne: true } })
+        .sort({ published_at: -1 })
+        .skip(skip)
+        .limit(limit),
+      Article.countDocuments({ category }),
+    ]);
+
+    const responseData = {
+      category,
+      results: articles.length,
+      total,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      data: {
+        articles,
+      },
+    };
+
+    await setCache(cacheKey, responseData, 432000);
+
+    res.status(200).json({
+      status: 'success',
+      cached: false,
+      ...responseData,
+    });
+  } catch (err) {
+    res.status(500).json({
+      status: 'error',
+      message: err.message,
+    });
+  }
+};
+
+exports.getNewsByCategory = async (req, res) => {
+  try {
+    const { category } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 30;
+
+    const cacheKey = generateCacheKey('news:category', {
+      category,
+      page,
+      limit,
+    });
+    const cachedData = await getCache(cacheKey);
+    if (cachedData) {
+      return res
+        .status(200)
+        .json({ status: 'success', cached: true, data: cachedData });
+    }
+
+    const now = new Date();
+    const FRESHNESS_THRESHOLD = 36 * 60 * 60 * 1000;
+
+    const allArticles = await Article.find({
+      category: { $in: [category] },
+      $or: [{ isHeadline: { $ne: true } }, { isHeadline: { $exists: false } }],
+    }).sort({ published_at: -1 });
+
+    const total = allArticles.length;
+
+    const processedArticles = allArticles.map((article) => {
+      const age = now - new Date(article.published_at);
+      let score = rankArticle(article, { source_credibility: 0.8 });
+      if (age > FRESHNESS_THRESHOLD) score *= 0.3;
+
+      const articleObj = article.toObject();
+      delete articleObj.isHeadline;
+
+      return {
+        ...articleObj,
+        score,
+        isFresh: age <= FRESHNESS_THRESHOLD,
+        published_at: article.published_at,
+      };
+    });
+
+    const rankedArticles = [...processedArticles].sort(
+      (a, b) => b.score - a.score
+    );
+
+    const startIndex = (page - 1) * limit;
+    const paginatedArticles = rankedArticles.slice(
+      startIndex,
+      startIndex + limit
+    );
+
+    const freshArticles = processedArticles.filter((a) => a.isFresh);
+
+    const responseData = {
+      articles: paginatedArticles,
+      meta: {
+        category,
+        total,
+        freshCount: freshArticles.length,
+        page,
+        totalPages: Math.ceil(total / limit),
+        freshnessThreshold: '36 hours',
+      },
+    };
+
+    await setCache(cacheKey, responseData, 432000);
+
+    res
+      .status(200)
+      .json({ status: 'success', cached: false, data: responseData });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
   }
 };
 

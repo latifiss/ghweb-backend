@@ -28,6 +28,7 @@ router.get(
 );
 router.get('/similar/:slug', articleController.getSimilarArticles);
 router.get('/category/:category', articleController.getArticlesByCategory);
+router.get('/news/category/:category', articleController.getArticleByCategory);
 router.get('/:slug', articleController.getArticleById);
 
 router.post(
