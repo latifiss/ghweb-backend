@@ -8,7 +8,7 @@ const generateCacheKey = (prefix, params) => {
   return `${prefix}:${Object.values(params).join(':')}`;
 };
 
-const setCache = async (key, data, expiration = 432000) => {
+const setCache = async (key, data, expiration = 300) => {
   try {
     const client = await getRedisClient();
     await client.setEx(key, expiration, JSON.stringify(data));
@@ -21,7 +21,7 @@ const getCache = async (key) => {
   try {
     const client = await getRedisClient();
     const cachedData = await client.get(key);
-    return cachedData ? JSON.parse(cachedData) : null;
+    return cachedData ? 极JSON.parse(cachedData) : null;
   } catch (err) {
     console.error('Redis get error:', err);
     return null;
@@ -137,6 +137,7 @@ exports.getFeedByCategory = async (req, res) => {
     const now = new Date();
     const TOP_SECTION_SIZE = 6;
     const MIXED_SECTION_SIZE = 24;
+    const FRESHNESS_THRESHOLD = 36 * 60 * 60 * 1000;
 
     const categoryRegex = new RegExp(`^${category}$`, 'i');
     const allArticles = await ZaspArticle.find({
@@ -256,6 +257,7 @@ exports.getFeedByTags = async (req, res) => {
     const now = new Date();
     const TOP_SECTION_SIZE = 6;
     const MIXED_SECTION_SIZE = 24;
+    const FRESHNESS_THRESHOLD = 36 * 60 * 60 * 1000;
 
     const allArticles = await ZaspArticle.find({
       tags: { $regex: new RegExp(tag, 'i') },
@@ -264,7 +266,11 @@ exports.getFeedByTags = async (req, res) => {
     const processedArticles = allArticles.map((article) => {
       const age = now - new Date(article.published_at);
       let score = rankArticle(article, { source_credibility: 0.8 });
-      if (age > FRESHNESS_THRESHOLD) score *= 0.3;
+
+      if (age > FRESHNESS_THRESHOLD) {
+        score *= 0.3;
+      }
+
       return {
         ...article.toObject(),
         score,

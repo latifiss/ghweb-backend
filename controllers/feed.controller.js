@@ -64,7 +64,11 @@ exports.getFeed = async (req, res) => {
     const processedArticles = allArticles.map((article) => {
       const age = now - new Date(article.published_at);
       let score = rankArticle(article, { source_credibility: 0.8 });
-      if (age > FRESHNESS_THRESHOLD) score *= 0.3;
+
+      if (age > FRESHNESS_THRESHOLD) {
+        score *= 0.3;
+      }
+
       return {
         ...article.toObject(),
         score,
@@ -121,8 +125,7 @@ exports.getFeed = async (req, res) => {
 
 exports.getFeedByCategory = async (req, res) => {
   try {
-    let { category } = req.params;
-    category = category.toLowerCase();
+    const { category } = req.params;
     const limit = parseInt(req.query.limit) || 30;
     const cacheKey = generateCacheKey('feed:category', { category, limit });
     const cachedData = await getCache(cacheKey);
@@ -144,12 +147,18 @@ exports.getFeedByCategory = async (req, res) => {
     const allArticles = await Article.find({
       category: { $elemMatch: { $regex: categoryRegex } },
       isCategoryHeadline: { $ne: true },
-    }).sort({ published_at: -1 });
+    }).sort({
+      published_at: -1,
+    });
 
     const processedArticles = allArticles.map((article) => {
       const age = now - new Date(article.published_at);
       let score = rankArticle(article, { source_credibility: 0.8 });
-      if (age > FRESHNESS_THRESHOLD) score *= 0.3;
+
+      if (age > FRESHNESS_THRESHOLD) {
+        score *= 0.3;
+      }
+
       return {
         ...article.toObject(),
         score,
@@ -242,8 +251,7 @@ exports.getFeedByCategory = async (req, res) => {
 
 exports.getFeedByTags = async (req, res) => {
   try {
-    let { tag } = req.params;
-    tag = tag.toLowerCase();
+    const { tag } = req.params;
     const limit = parseInt(req.query.limit) || 30;
     const cacheKey = generateCacheKey('feed:tag', { tag, limit });
     const cachedData = await getCache(cacheKey);
@@ -268,7 +276,11 @@ exports.getFeedByTags = async (req, res) => {
     const processedArticles = allArticles.map((article) => {
       const age = now - new Date(article.published_at);
       let score = rankArticle(article, { source_credibility: 0.8 });
-      if (age > FRESHNESS_THRESHOLD) score *= 0.3;
+
+      if (age > FRESHNESS_THRESHOLD) {
+        score *= 0.3;
+      }
+
       return {
         ...article.toObject(),
         score,
