@@ -539,8 +539,7 @@ exports.getArticles = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 432000);
-
+    await setCache(cacheKey, responseData, 3600);
     res.status(200).json({
       status: 'success',
       cached: false,
@@ -689,8 +688,7 @@ exports.getArticlesByCategory = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 432000);
-
+    await setCache(cacheKey, responseData, 3600);
     res.status(200).json({
       status: 'success',
       cached: false,
