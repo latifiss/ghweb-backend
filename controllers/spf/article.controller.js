@@ -341,7 +341,7 @@ exports.getHeadline = async (req, res) => {
       .limit(3);
     const responseData = { headline: headlineArticle, similarArticles };
 
-    await setCache(cacheKey, responseData, 432000);
+    await setCache(cacheKey, responseData, 3600);
     res
       .status(200)
       .json({ status: 'success', cached: false, data: responseData });
@@ -378,7 +378,7 @@ exports.getCategoryHeadline = async (req, res) => {
       .limit(3);
     const responseData = { categoryHeadline, similarArticles };
 
-    await setCache(cacheKey, responseData, 432000);
+    await setCache(cacheKey, responseData, 3600);
     res
       .status(200)
       .json({ status: 'success', cached: false, data: responseData });
@@ -569,8 +569,7 @@ exports.getArticles = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 432000);
-
+    await setCache(cacheKey, responseData, 3600);
     res.status(200).json({
       status: 'success',
       cached: false,
@@ -719,8 +718,7 @@ exports.getArticlesByCategory = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 432000);
-
+    await setCache(cacheKey, responseData, 3600);
     res.status(200).json({
       status: 'success',
       cached: false,

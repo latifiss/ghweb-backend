@@ -324,8 +324,7 @@ exports.getAllMovies = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 432000);
-
+    await setCache(cacheKey, responseData, 3600);
     res.status(200).json({
       status: 'success',
       cached: false,
@@ -380,8 +379,7 @@ exports.getMoviesByCategory = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 432000);
-
+    await setCache(cacheKey, responseData, 3600);
     res.status(200).json({
       status: 'success',
       cached: false,
@@ -429,8 +427,7 @@ exports.getMoviesByGenre = async (req, res) => {
       },
     };
 
-    await setCache(cacheKey, responseData, 432000);
-
+    await setCache(cacheKey, responseData, 3600);
     res.status(200).json({
       status: 'success',
       cached: false,
